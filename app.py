@@ -8,7 +8,7 @@ import io
 import concurrent.futures
 from dotenv import load_dotenv
 
-# Safe & Robust import for PDF Reader (pypdf or PyPDF2)
+# Safe & Robust import for PDF Reader (pypdf)
 PYPDF_AVAILABLE = False
 PdfReader = None
 
@@ -17,13 +17,8 @@ try:
     PdfReader = pypdf.PdfReader
     PYPDF_AVAILABLE = True
 except Exception:
-    try:
-        import PyPDF2
-        PdfReader = PyPDF2.PdfReader
-        PYPDF_AVAILABLE = True
-    except Exception:
-        PYPDF_AVAILABLE = False
-        PdfReader = None
+    PYPDF_AVAILABLE = False
+    PdfReader = None
 
 # Load environment variables from .env if present
 load_dotenv()
