@@ -2,547 +2,605 @@ from flask import Flask, render_template, request, Response, jsonify, stream_wit
 import time
 import json
 import requests
+import re
+import os
+import io
+import concurrent.futures
+from dotenv import load_dotenv
+
+# Safe & Robust import for PDF Reader (pypdf or PyPDF2)
+PYPDF_AVAILABLE = False
+PdfReader = None
+
+try:
+    import pypdf
+    PdfReader = pypdf.PdfReader
+    PYPDF_AVAILABLE = True
+except Exception:
+    try:
+        import PyPDF2
+        PdfReader = PyPDF2.PdfReader
+        PYPDF_AVAILABLE = True
+    except Exception:
+        PYPDF_AVAILABLE = False
+        PdfReader = None
+
+# Load environment variables from .env if present
+load_dotenv()
 
 app = Flask(__name__)
 
-# API key is NOT stored server-side — it is passed per-request from the browser (stored in localStorage)
+# System Configurations & Endpoints
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
+DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 
-# Model limits mapping
-# Note: Whisper models are transcription models, so we query groq/compound while simulating Whisper limits.
-MODELS = {
-    "canopylabs/orpheus-arabic-saudi": {
-        "name": "Canopy Labs Orpheus Arabic (Saudi)",
-        "rpm": 10, "rpd": 100, "tpm": 1200, "tpd": 3600,
-        "is_audio": False
-    },
-    "canopylabs/orpheus-v1-english": {
-        "name": "Canopy Labs Orpheus V1 English",
-        "rpm": 10, "rpd": 100, "tpm": 1200, "tpd": 3600,
-        "is_audio": False
-    },
-    "groq/compound": {
-        "name": "Groq Compound (Beta)",
-        "rpm": 30, "rpd": 250, "tpm": 70000, "tpd": None,
-        "is_audio": False
-    },
-    "groq/compound-mini": {
-        "name": "Groq Compound Mini",
-        "rpm": 30, "rpd": 250, "tpm": 70000, "tpd": None,
-        "is_audio": False
-    },
-    "meta-llama/llama-prompt-guard-2-22m": {
-        "name": "Llama Prompt Guard 2 22M",
-        "rpm": 30, "rpd": 14400, "tpm": 15000, "tpd": 500000,
-        "is_audio": False
-    },
-    "meta-llama/llama-prompt-guard-2-86m": {
-        "name": "Llama Prompt Guard 2 86M",
-        "rpm": 30, "rpd": 14400, "tpm": 15000, "tpd": 500000,
-        "is_audio": False
-    },
-    "openai/gpt-oss-120b": {
-        "name": "GPT OSS 120B",
-        "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000,
-        "is_audio": False
+# Built-In System Cloud Key (from .env or Vercel environment variables)
+BUILTIN_SYSTEM_TOKEN = os.environ.get("GROQ_API_KEY", "").strip()
+
+# Compute Engine Profiles (Official Active Groq Cloud Models)
+ONLINE_COMPUTE_ENGINES = {
+    "qwen/qwen3.6-27b": {
+        "name": "Groq Qwen 3.6 27B Engine",
+        "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000
     },
     "openai/gpt-oss-20b": {
-        "name": "GPT OSS 20B",
-        "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000,
-        "is_audio": False
-    },
-    "openai/gpt-oss-safeguard-20b": {
-        "name": "Safety GPT OSS 20B",
-        "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000,
-        "is_audio": False
-    },
-    "qwen/qwen3.6-27b": {
-        "name": "Qwen 3.6 27B",
-        "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000,
-        "is_audio": False
+        "name": "Groq Fast Synthesizer Engine",
+        "rpm": 30, "rpd": 14400, "tpm": 18000, "tpd": 500000
     },
     "qwen/qwen3.8-27b": {
-        "name": "Qwen 3.8 27B",
-        "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 2000000,
-        "is_audio": False
+        "name": "Groq Qwen 3.8 Deep Engine",
+        "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000
     },
-    "whisper-large-v3": {
-        "name": "Whisper Large V3 (Audio)",
-        "rpm": 20, "rpd": 2000, "ash": 7200, "asd": 28800,
-        "is_audio": True
-    },
-    "whisper-large-v3-turbo": {
-        "name": "Whisper Large V3 Turbo (Audio)",
-        "rpm": 20, "rpd": 2000, "ash": 7200, "asd": 28800,
-        "is_audio": True
+    "openai/gpt-oss-120b": {
+        "name": "Groq Ultra-Capacity Engine",
+        "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000
     }
 }
 
-class QueueRateLimiter:
-    def __init__(self, rpm, tpm=None):
-        self.rpm = rpm
-        self.tpm = tpm
+class SystemCapacityTracker:
+    def __init__(self):
         self.request_times = []
-        self.token_usage = []  # items are tuples (timestamp, tokens)
+        self.token_history = []
+        self.daily_tokens = 0
+        self.last_reset = time.time()
 
-    def acquire_slot(self, estimated_tokens, send_log_fn):
+    def record_usage(self, tokens):
         now = time.time()
-        # Clean older than 60s
+        self.request_times.append(now)
+        self.token_history.append((now, tokens))
+        self.daily_tokens += tokens
+
+    def get_capacity_metrics(self):
+        now = time.time()
         self.request_times = [t for t in self.request_times if now - t < 60]
-        self.token_usage = [item for item in self.token_usage if now - item[0] < 60]
+        self.token_history = [item for item in self.token_history if now - item[0] < 60]
 
-        # Check RPM
-        if len(self.request_times) >= self.rpm:
-            wait_time = 60 - (now - self.request_times[0]) + 0.5
-            if wait_time > 0:
-                send_log_fn(f"RPM limit of {self.rpm} reached. Pausing queue for {wait_time:.2f} seconds...")
-                time.sleep(wait_time)
-                return self.acquire_slot(estimated_tokens, send_log_fn)
+        current_minute_tokens = sum(tok for ts, tok in self.token_history)
+        max_tpm_capacity = 8000
+        capacity_pct = min(100, max(0, int((current_minute_tokens / max_tpm_capacity) * 100)))
 
-        # Check TPM
-        if self.tpm:
-            current_tpm_usage = sum(tokens for ts, tokens in self.token_usage)
-            if current_tpm_usage + estimated_tokens > self.tpm:
-                # Find wait time to clean up enough tokens
-                self.token_usage.sort(key=lambda x: x[0])
-                wait_time = 0
-                temp_usage = current_tpm_usage
-                for ts, tokens in self.token_usage:
-                    temp_usage -= tokens
-                    if temp_usage + estimated_tokens <= self.tpm:
-                        wait_time = 60 - (now - ts) + 0.5
-                        break
-                if wait_time > 0:
-                    send_log_fn(f"Estimated TPM limit ({self.tpm}) would be exceeded. Current minute usage: {current_tpm_usage} tokens. Pausing queue for {wait_time:.2f} seconds...")
-                    time.sleep(wait_time)
-                    return self.acquire_slot(estimated_tokens, send_log_fn)
+        deep_dive_locked = capacity_pct >= 80 or len(self.request_times) >= 25
+        cooldown_seconds = 0
+        if deep_dive_locked and len(self.token_history) > 0:
+            oldest_ts = self.token_history[0][0]
+            cooldown_seconds = max(1, int(60 - (now - oldest_ts)))
 
-        # Approved
-        self.request_times.append(time.time())
-        return True
+        return {
+            "capacity_utilized_pct": capacity_pct,
+            "current_tpm": current_minute_tokens,
+            "rpm_count": len(self.request_times),
+            "deep_dive_locked": deep_dive_locked,
+            "cooldown_seconds": cooldown_seconds
+        }
 
-    def record_usage(self, actual_tokens):
-        self.token_usage.append((time.time(), actual_tokens))
+capacity_tracker = SystemCapacityTracker()
 
-    def get_wait_time(self, estimated_tokens):
-        now = time.time()
-        # Clean older than 60s
-        request_times = [t for t in self.request_times if now - t < 60]
-        token_usage = [item for item in self.token_usage if now - item[0] < 60]
+OLLAMA_CACHE = {"timestamp": 0, "models": []}
 
-        wait_time = 0
-        
-        # Check RPM
-        if len(request_times) >= self.rpm:
-            wait_time = max(wait_time, 60 - (now - request_times[0]) + 0.5)
+def probe_local_ollama_engines(host=DEFAULT_OLLAMA_HOST):
+    global OLLAMA_CACHE
+    now = time.time()
 
-        # Check TPM
-        if self.tpm:
-            current_tpm_usage = sum(tokens for ts, tokens in token_usage)
-            if current_tpm_usage + estimated_tokens > self.tpm:
-                token_usage.sort(key=lambda x: x[0])
-                tpm_wait = 0
-                temp_usage = current_tpm_usage
-                for ts, tokens in token_usage:
-                    temp_usage -= tokens
-                    if temp_usage + estimated_tokens <= self.tpm:
-                        tpm_wait = 60 - (now - ts) + 0.5
-                        break
-                wait_time = max(wait_time, tpm_wait)
-                
-        return wait_time
+    if OLLAMA_CACHE["models"] and (now - OLLAMA_CACHE["timestamp"] < 15):
+        return OLLAMA_CACHE["models"]
 
-# Shared cache for rate limiters per model selected
-rate_limiters = {}
-
-def get_rate_limiter(model_id):
-    if model_id not in rate_limiters:
-        config = MODELS.get(model_id, {"rpm": 10, "tpm": 1200})
-        rate_limiters[model_id] = QueueRateLimiter(config["rpm"], config.get("tpm"))
-    return rate_limiters[model_id]
+    clean_host = (host or DEFAULT_OLLAMA_HOST).rstrip('/')
+    try:
+        res = requests.get(f"{clean_host}/api/tags", timeout=3.0)
+        if res.status_code == 200:
+            models_data = res.json().get("models", [])
+            model_names = [m["name"] for m in models_data]
+            OLLAMA_CACHE = {"timestamp": now, "models": model_names}
+            return model_names
+    except Exception:
+        if OLLAMA_CACHE["models"] and (now - OLLAMA_CACHE["timestamp"] < 120):
+            return OLLAMA_CACHE["models"]
+            
+    return []
 
 
-# BATCH PROMPTS — 5-Stage Analyst Research Pipeline
-# Each batch covers a distinct research dimension. The model runs all 5 stages
-# internally and outputs ONLY the final synthesised answer (Stage 5).
-BATCHES = [
-    {
-        "id": 1,
-        "name": "Foundations & Core Concepts",
-        "prompt": """You are an expert research analyst. Work through the five stages below for the topic: "{topic}"
+def verify_and_cleanse_output(content, topic=""):
+    """
+    Automated Quality Verification & Anti-Loop Cleansing System:
+    - Detects and removes degenerate repeating heading loops.
+    - Cleans fake/hallucinated domain URLs.
+    - Sanitizes Markdown formatting.
+    """
+    if not content:
+        return content
 
----
-STAGE 1 — UNDERSTAND THE TOPIC
-Identify the user's likely intent, scope, and key concepts. Determine the type of answer needed. Note any important ambiguity.
-Focus this stage on: core definitions, key actors, and foundational principles.
+    lines = content.splitlines()
+    cleaned_lines = []
+    seen_headings = {}
+    consecutive_repeat_count = 0
+    last_line = ""
 
----
-STAGE 2 — EXTRACT RELEVANT EVIDENCE
-From your knowledge, extract only information directly relevant to this topic's foundations.
-For each important finding, note: the finding, the supporting evidence, and the source.
-Remove weak, irrelevant, or unsupported information. Do not invent facts or URLs.
+    for line in lines:
+        stripped = line.strip()
 
----
-STAGE 3 — ANALYZE AND SYNTHESIZE
-Identify the most important patterns, relationships, and conclusions from the extracted evidence.
-Do not simply list facts. Explain what the evidence collectively shows about this topic's foundations and key actors.
+        # Skip consecutive duplicate lines
+        if stripped and stripped == last_line:
+            consecutive_repeat_count += 1
+            if consecutive_repeat_count >= 2:
+                continue
+        else:
+            consecutive_repeat_count = 0
+            last_line = stripped
 
----
-STAGE 4 — VALIDATE AND ADD CONTEXT
-Check for: unsupported claims, contradictions, missing context, important limitations.
-Flag or correct issues using only available evidence. Add relevant caveats.
+        # Detect degenerate repetitive heading patterns
+        heading_match = re.match(r'^(?:\d+\.)+\d*\s+(.+)$', stripped)
+        if heading_match:
+            heading_text = heading_match.group(1).lower().strip()
+            seen_headings[heading_text] = seen_headings.get(heading_text, 0) + 1
+            if seen_headings[heading_text] > 2:
+                continue
 
----
-STAGE 5 — GENERATE THE FINAL ANSWER
-Using the validated findings above, write a complete, professional answer covering:
-- WHO: the key stakeholders, actors, pioneers, and target groups — and their significance
-- WHAT: a precise definition, core components, and how they interrelate
+        # Clean fake/hallucinated URLs like groq.ml or ollama.ml
+        cleaned_line = re.sub(r'\[([^\]]+)\]\(https?://(?:groq|ollama)\.ml/?[^\)]*\)', r'\1', line)
+        cleaned_lines.append(cleaned_line)
 
-Rules:
-- Answer the topic directly at the start. Do not open with a dictionary definition.
-- Synthesise and analyse — do not list facts without explanation.
-- Use a structure appropriate to this specific topic.
-- Explain why findings matter, not just what they are.
-- Be clear, concise, and professional. No filler, no repetition.
-- Do not mention these stages, the research process, or internal reasoning.
-- Do not invent statistics, rankings, or URLs.
-- Include only sources that genuinely support your answer, formatted as: [Author/Organisation — Title](URL)
+    result_text = "\n".join(cleaned_lines).strip()
+    return result_text
 
-Output only the final answer from Stage 5."""
-    },
-    {
-        "id": 2,
-        "name": "Context, Applications & Timeline",
-        "prompt": """You are an expert research analyst. Work through the five stages below for the topic: "{topic}"
 
----
-STAGE 1 — UNDERSTAND THE TOPIC
-Identify the user's likely intent, scope, and key concepts for this topic.
-Focus this stage on: where this topic applies, when it emerged, and its adoption trajectory.
-
----
-STAGE 2 — EXTRACT RELEVANT EVIDENCE
-Extract only information directly relevant to this topic's real-world applications and historical context.
-For each important finding, note: the finding, the supporting evidence, and the source.
-Remove duplicate, weak, or unsupported information. Do not invent facts or URLs.
-
----
-STAGE 3 — ANALYZE AND SYNTHESIZE
-Identify patterns, adoption timelines, causal relationships, and sector-specific insights.
-Explain what the evidence collectively shows — not just where and when, but why those applications emerged.
-
----
-STAGE 4 — VALIDATE AND ADD CONTEXT
-Check for: unsupported claims, over-generalisation, missing context, important edge cases.
-Flag or correct issues. Note where this topic does not apply or has limitations.
-
----
-STAGE 5 — GENERATE THE FINAL ANSWER
-Using the validated findings above, write a complete, professional answer covering:
-- WHERE: industries, sectors, environments, and geographies where this applies — and why
-- WHEN: meaningful milestones, adoption phases, and forward trajectory
-
-Rules:
-- Answer the topic directly at the start.
-- Use concrete, real-world examples. Avoid vague generalisations.
-- Analyse causality and patterns — not just a list of dates or sectors.
-- Be clear, concise, and professional. No filler, no repetition.
-- Do not mention these stages, the research process, or internal reasoning.
-- Do not invent statistics, rankings, or URLs.
-- Include only sources that genuinely support your answer, formatted as: [Author/Organisation — Title](URL)
-
-Output only the final answer from Stage 5."""
-    },
-    {
-        "id": 3,
-        "name": "Evaluation, Trade-offs & Methodology",
-        "prompt": """You are an expert research analyst. Work through the five stages below for the topic: "{topic}"
-
----
-STAGE 1 — UNDERSTAND THE TOPIC
-Identify the user's likely intent and what type of evaluative answer is needed.
-Focus this stage on: why this topic matters, its advantages and disadvantages, and how it works in practice.
-
----
-STAGE 2 — EXTRACT RELEVANT EVIDENCE
-Extract only information relevant to the significance, trade-offs, critiques, and implementation of this topic.
-For each important finding, note: the finding, the supporting evidence, and the source.
-Where evidence conflicts, capture both sides. Do not invent facts or URLs.
-
----
-STAGE 3 — ANALYZE AND SYNTHESIZE
-Identify the most important trade-offs, evaluative criteria, and methodological insights.
-Where evidence conflicts, explain why. Go beyond description — offer a synthesised perspective on what matters most.
-
----
-STAGE 4 — VALIDATE AND ADD CONTEXT
-Check for: unsupported claims, one-sided analysis, missing caveats, contested evidence.
-Correct or flag issues. Do not present subjective conclusions as objective facts.
-
----
-STAGE 5 — GENERATE THE FINAL ANSWER
-Using the validated findings above, write a complete, professional answer covering:
-- WHY: significance, advantages, disadvantages, and balanced critiques
-- HOW: methodology, workflow, or implementation — with meaningful comparisons where multiple approaches exist
-
-Rules:
-- Answer the topic directly at the start.
-- State criteria clearly when comparing or ranking. Do not present subjective conclusions as facts.
-- Acknowledge uncertainty or contested evidence where it exists.
-- Be clear, concise, and professional. No filler, no repetition.
-- Do not mention these stages, the research process, or internal reasoning.
-- Do not invent statistics, rankings, or URLs.
-- Include only sources that genuinely support your answer, formatted as: [Author/Organisation — Title](URL)
-
-Output only the final answer from Stage 5."""
-    },
-    {
-        "id": 4,
-        "name": "Advanced Analysis & Emerging Dimensions",
-        "prompt": """You are an expert research analyst. Work through the five stages below for the topic: "{topic}"
-
----
-STAGE 1 — UNDERSTAND THE TOPIC
-Identify the adjacent dimensions, peripheral technologies, and secondary factors a practitioner or decision-maker needs to understand about this topic.
-Focus this stage on: what lies beyond the core — related concepts, industry context, open questions.
-
----
-STAGE 2 — EXTRACT RELEVANT EVIDENCE
-Extract only information relevant to the broader landscape of this topic — adjacent technologies, trends, challenges, and open debates.
-For each important finding, note: the finding, the supporting evidence, and the source.
-Prioritise quality over quantity. Do not invent facts or URLs.
-
----
-STAGE 3 — ANALYZE AND SYNTHESIZE
-Synthesise the connections between the main topic and its periphery.
-Explain why these connections matter — not just what they are.
-Highlight emerging trends, unresolved challenges, and open research questions.
-
----
-STAGE 4 — VALIDATE AND ADD CONTEXT
-Check for: unsupported claims, overstated trends, contested findings, gaps in current knowledge.
-Flag or correct issues. Add important caveats where the landscape is uncertain.
-
----
-STAGE 5 — GENERATE THE FINAL ANSWER
-Using the validated findings above, write a comprehensive deep-dive covering:
-- Adjacent technologies, related concepts, and industry context
-- Emerging trends and their implications
-- Unresolved challenges and open questions
-- What this means for practitioners or decision-makers
-
-Rules:
-- Choose the structure that best fits this specific topic.
-- Prefer coherent, evidence-backed prose over bullet-point fact lists.
-- Synthesise connections — explain significance, not just existence.
-- Be clear, concise, and professional. No filler, no repetition.
-- Do not mention these stages, the research process, or internal reasoning.
-- Do not invent statistics, rankings, or URLs.
-- Include only sources that genuinely support your answer, formatted as: [Author/Organisation — Title](URL)
-
-Output only the final answer from Stage 5."""
-    },
-    {
-        "id": 5,
-        "name": "Solutions, Tools & Recommendations",
-        "prompt": """You are an expert research analyst. Work through the five stages below for the topic: "{topic}"
-
----
-STAGE 1 — UNDERSTAND THE TOPIC
-Identify what type of solutions, tools, vendors, or recommendations the user needs.
-Determine the relevant evaluation criteria for this specific topic (e.g. cost, scalability, maturity, use-case fit, ecosystem).
-
----
-STAGE 2 — EXTRACT RELEVANT EVIDENCE
-Extract only information relevant to the leading solutions, tools, vendors, or approaches for this topic.
-For each important finding, note: the option, its key characteristics, and the source.
-Do not invent product features, pricing, or performance benchmarks.
-
----
-STAGE 3 — ANALYZE AND SYNTHESIZE
-Compare options based on the criteria identified in Stage 1.
-Highlight meaningful differentiators, trade-offs, and use-case fits.
-Do not present rankings as absolute facts — make the basis for comparison explicit.
-
----
-STAGE 4 — VALIDATE AND ADD CONTEXT
-Check for: unsupported claims, marketing bias, missing alternatives, important selection risks.
-Add caveats a decision-maker should know. Include open-source or alternative options where relevant.
-
----
-STAGE 5 — GENERATE THE FINAL ANSWER
-Using the validated findings above, write a structured, actionable answer covering:
-- The leading solutions, tools, or approaches — with clear evaluation criteria stated upfront
-- For each: core strengths, primary use-cases, and ideal fit
-- Meaningful differentiators and trade-offs between options
-- Important limitations, vendor risks, or selection considerations
-- Open-source or alternative options where relevant
-
-Rules:
-- Answer directly at the start: what are the top options and on what basis?
-- Be specific — avoid generic marketing language.
-- State criteria clearly when ranking. Do not present subjective conclusions as facts.
-- Be clear, concise, and professional. No filler, no repetition.
-- Do not mention these stages, the research process, or internal reasoning.
-- Do not invent statistics, rankings, or URLs.
-- Include only sources that genuinely support your answer, formatted as: [Author/Organisation — Title](URL)
-
-Output only the final answer from Stage 5."""
+def execute_groq_cloud_node(prompt, access_token, preferred_model="qwen/qwen3.6-27b", temperature=0.2):
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "User-Agent": "Aethelgard-Compute-Engine/2.0"
     }
-]
 
+    target_model = preferred_model if preferred_model in ONLINE_COMPUTE_ENGINES else "qwen/qwen3.6-27b"
+    
+    payload = {
+        "model": target_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature
+    }
+
+    res = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=45)
+    
+    if res.status_code == 401 or res.status_code == 403:
+        raise Exception("Authentication Error (401): The provided Groq Access Key is invalid or expired. Enter a valid free Groq API Key (gsk_...) or uncheck 'Enable Groq Key' to use local Ollama.")
+
+    # Dynamic model fallback if requested model ID is 404 or rate-limited
+    if res.status_code == 404 or res.status_code == 429:
+        time.sleep(1)
+        try:
+            m_res = requests.get(GROQ_MODELS_URL, headers=headers, timeout=10)
+            if m_res.status_code == 200:
+                active_list = [m['id'] for m in m_res.json().get('data', []) if not m['id'].startswith('whisper') and not m['id'].startswith('meta-llama/llama-prompt-guard')]
+                for active_m in active_list:
+                    payload["model"] = active_m
+                    res = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=45)
+                    if res.status_code == 200:
+                        target_model = active_m
+                        break
+        except Exception:
+            pass
+
+    res.raise_for_status()
+    res_data = res.json()
+    content = res_data["choices"][0]["message"]["content"]
+    usage = res_data.get("usage", {})
+    p_tokens = usage.get("prompt_tokens", len(prompt) // 4)
+    c_tokens = usage.get("completion_tokens", len(content) // 4)
+    engine_name = ONLINE_COMPUTE_ENGINES.get(target_model, {}).get("name", f"Groq Node ({target_model})")
+    return content, p_tokens, c_tokens, engine_name
+
+
+def execute_compute_node(prompt, mode="auto", access_token=None, preferred_model="qwen/qwen3.6-27b", ollama_host=DEFAULT_OLLAMA_HOST, temperature=0.2):
+    token_to_use = (access_token or "").strip()
+    
+    # Priority 1: Groq API Cloud Engine (If token is explicitly provided starting with gsk_)
+    if token_to_use and token_to_use.startswith("gsk_"):
+        return execute_groq_cloud_node(prompt, access_token=token_to_use, preferred_model=preferred_model, temperature=temperature)
+
+    # Priority 2: Local / Network Ollama Node
+    local_engines = probe_local_ollama_engines(ollama_host)
+    if mode == "ollama" or len(local_engines) > 0:
+        if len(local_engines) > 0:
+            target_model = preferred_model if preferred_model in local_engines else local_engines[0]
+            url = f"{ollama_host.rstrip('/')}/api/chat"
+            payload = {
+                "model": target_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "options": {
+                    "temperature": temperature,
+                    "num_ctx": 2048,
+                    "num_predict": 768,
+                    "repeat_penalty": 1.22,
+                    "presence_penalty": 0.5,
+                    "frequency_penalty": 0.5
+                }
+            }
+            try:
+                res = requests.post(url, json=payload, timeout=600)
+                if res.status_code == 200:
+                    data = res.json()
+                    content = data.get("message", {}).get("content", "")
+                    p_tokens = data.get("prompt_eval_count", len(prompt) // 4)
+                    c_tokens = data.get("eval_count", len(content) // 4)
+                    return content, p_tokens, c_tokens, f"Local Ollama ({target_model})"
+            except Exception as e:
+                raise Exception(f"Local Ollama Connection Error: {str(e)}. Ensure 'ollama serve' is running locally.")
+
+    # Fallback to system key if available and no explicit access key was passed
+    if BUILTIN_SYSTEM_TOKEN and BUILTIN_SYSTEM_TOKEN.startswith("gsk_"):
+        return execute_groq_cloud_node(prompt, access_token=BUILTIN_SYSTEM_TOKEN, preferred_model=preferred_model, temperature=temperature)
+
+    raise Exception("No active compute node available. Run 'ollama serve' locally, or enter a free Groq API Key (gsk_...) in the Access Key panel.")
+
+
+def classify_research_archetype(topic, document_attached=False):
+    if document_attached:
+        return "DOCUMENT_RESEARCH"
+
+    t_lower = topic.lower().strip()
+    
+    if " vs " in t_lower or " versus " in t_lower or "compare " in t_lower or "difference between" in t_lower:
+        return "COMPARISON"
+        
+    if t_lower.startswith("explain ") or t_lower.startswith("what is ") or t_lower.startswith("how does ") or "concept" in t_lower or "introduction to" in t_lower:
+        return "CONCEPT_EXPLANATION"
+        
+    if "investigate" in t_lower or "fraud" in t_lower or "manipulat" in t_lower or "claim" in t_lower or "truth about" in t_lower or "whistleblower" in t_lower:
+        return "INVESTIGATION"
+        
+    if "market" in t_lower or "industry" in t_lower or "sector" in t_lower or "adoption" in t_lower or "forecast" in t_lower:
+        return "MARKET_INDUSTRY"
+        
+    if "company" in t_lower or "analyze " in t_lower or "annual report" in t_lower or "business model" in t_lower:
+        return "CORPORATE_COMPANY"
+
+    return "GENERAL_ANALYTICAL"
+
+
+def build_dynamic_plan(topic, depth="standard", domain_focus="auto", tone="analyst", document_attached=False):
+    target_count = 5 if depth == "deep" else (3 if depth == "quick" else 4)
+    archetype = classify_research_archetype(topic, document_attached)
+
+    tone_instruction = {
+        "analyst": "Objective, analytical, evidence-backed evaluation.",
+        "technical": "Deep technical breakdown with architecture details, mechanics, and trade-offs.",
+        "executive": "Strategic summaries, executive insights, cost-benefit analyses, and key takeaways.",
+        "educational": "Clear, accessible explanations with conceptual definitions and practical examples."
+    }.get(tone, "Objective research analysis.")
+
+    domain_prompt = f"Lens focus: {domain_focus.upper()}." if domain_focus != "auto" else ""
+
+    plan_prompt = f"""You are a Principal AI Research Analyst. Design a customized, domain-specific research plan containing exactly {target_count} sections for the following research topic:
+
+QUERY: "{topic}"
+QUERY ARCHETYPE: {archetype}
+TARGET SECTIONS: {target_count}
+{domain_prompt}
+TONE EXPECTATION: {tone_instruction}
+
+IMPORTANT STRUCTURAL GUIDELINES:
+1. DO NOT use a single fixed template for all topics. Match the structure to the nature of the topic:
+   - For COMPARISON queries ("React vs Vue", "Groq vs Ollama"): Include Comparison Matrix, Performance & DX, Ecosystem, Trade-Offs, and Best Use Case Verdict.
+   - For CONCEPT EXPLANATION queries ("Explain Quantum Computing"): Include Plain-Language Intuition, Technical Mechanics, Classical vs Quantum Comparison, Real-World Applications, and Misconceptions.
+   - For INVESTIGATION queries ("Investigate financial manipulation"): Include Known Facts, Primary Evidence, Financial/Technical Indicators, Contradictions, and Assessment.
+   - For MARKET/INDUSTRY queries ("India's EV market"): Include Market Size & Growth, Key Players, Drivers & Infrastructure, Regulations, and Future Outlook.
+   - For DOCUMENT RESEARCH: Include Document Findings, Financial/Technical Table Breakdown, External Verification, and Synthesized Verdict.
+2. Output strictly a JSON array format:
+[
+  {{"id": 1, "name": "Section Title", "description": "Scope of what this section investigates"}},
+  ...
+]"""
+
+    return plan_prompt, target_count, archetype
+
+
+def fallback_sections(topic, target_count=4, archetype="GENERAL_ANALYTICAL"):
+    if archetype == "COMPARISON":
+        sections = [
+            {"id": 1, "name": "Executive Verdict & Side-by-Side Matrix", "desc": "High-level comparative summary and structural criteria comparison."},
+            {"id": 2, "name": "Architecture & Performance Benchmark", "desc": "Core mechanics, speed, memory footprint, and scalability."},
+            {"id": 3, "name": "Developer Experience & Ecosystem", "desc": "Tooling, library support, community adoption, and learning curve."},
+            {"id": 4, "name": "Trade-offs & Optimal Use Cases", "desc": "Critical trade-offs, cost factors, and clear decision matrix."}
+        ]
+    elif archetype == "CONCEPT_EXPLANATION":
+        sections = [
+            {"id": 1, "name": "Plain-Language Intuition & Core Concept", "desc": "Fundamental explanation, conceptual analogies, and core definition."},
+            {"id": 2, "name": "Technical Mechanics & Under the Hood", "desc": "Underlying principles, mathematical/physical foundations, and operation."},
+            {"id": 3, "name": "Real-World Applications & Industry Impact", "desc": "Practical implementations, current breakthroughs, and active use cases."},
+            {"id": 4, "name": "Limitations & Common Misconceptions", "desc": "Technical constraints, common myths, and current state of research."}
+        ]
+    elif archetype == "INVESTIGATION":
+        sections = [
+            {"id": 1, "name": "Question Statement & Established Facts", "desc": "Primary inquiry, verified timeline, and uncontested facts."},
+            {"id": 2, "name": "Primary Evidence & Technical Indicators", "desc": "Detailed evidence, anomalies, metrics, and official filings."},
+            {"id": 3, "name": "Counter-Arguments & Alternative Explanations", "desc": "Defense arguments, alternative interpretations, and contradictory data."},
+            {"id": 4, "name": "Definitive Assessment & Remaining Unknowns", "desc": "Final verdict, what can be established vs what remains unproven."}
+        ]
+    elif archetype == "MARKET_INDUSTRY":
+        sections = [
+            {"id": 1, "name": "Executive Summary & Market Dynamics", "desc": "Current market size, CAGR projections, and structural state."},
+            {"id": 2, "name": "Competitive Landscape & Key Players", "desc": "Market share breakdown, leading companies, and moat analysis."},
+            {"id": 3, "name": "Regulatory Environment & Drivers", "desc": "Government policy, infrastructure availability, and demand catalysts."},
+            {"id": 4, "name": "Structural Risks & Future Outlook", "desc": "Supply chain vulnerabilities, adoption hurdles, and 5-year outlook."}
+        ]
+    elif archetype == "DOCUMENT_RESEARCH":
+        sections = [
+            {"id": 1, "name": "Core Document Findings & Key Evidence", "desc": "Direct extraction of primary facts, metrics, and claims from the file."},
+            {"id": 2, "name": "Data & Table Breakdown", "desc": "Structured breakdown of quantitative tables, figures, and financial data."},
+            {"id": 3, "name": "External Verification & Context", "desc": "Cross-checking document findings against external industry benchmarks."},
+            {"id": 4, "name": "Critical Analysis & Final Synthesis", "desc": "Gaps, contradictions, and authoritative conclusions."}
+        ]
+    else:
+        sections = [
+            {"id": 1, "name": "Foundations & Core Principles", "desc": "Direct definition, mechanics, and fundamental significance."},
+            {"id": 2, "name": "Context, Evolution & Applications", "desc": "Historical trajectory, adoption milestones, and real-world implementations."},
+            {"id": 3, "name": "Evaluation & Trade-offs", "desc": "Strengths, technical constraints, risks, and comparative analysis."},
+            {"id": 4, "name": "Innovations & Future Horizon", "desc": "Emerging developments, ecosystem tools, and strategic recommendations."}
+        ]
+    return sections[:target_count]
 
 
 @app.route("/")
 def index():
     return render_template("index.html")
 
-@app.route("/api/models")
-def get_models():
-    return jsonify(MODELS)
+@app.route("/api/capacity")
+def get_capacity():
+    return jsonify(capacity_tracker.get_capacity_metrics())
 
-@app.route("/api/research/stream")
+@app.route("/api/ollama/models")
+def get_ollama_models():
+    host = request.args.get("host", DEFAULT_OLLAMA_HOST)
+    models = probe_local_ollama_engines(host)
+    if models:
+        return jsonify({"available": True, "models": models})
+    return jsonify({"available": False, "models": [], "message": "Local compute node offline."})
+
+
+@app.route("/api/upload", methods=["POST"])
+def upload_document():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+        
+    uploaded_file = request.files['file']
+    filename = uploaded_file.filename
+    if not filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    extracted_text = ""
+    try:
+        if filename.lower().endswith('.pdf'):
+            if not PYPDF_AVAILABLE or PdfReader is None:
+                try:
+                    pdf_bytes = uploaded_file.read()
+                    extracted_text = pdf_bytes.decode('utf-8', errors='ignore')
+                except Exception:
+                    return jsonify({"error": "PDF parser (pypdf) is unavailable on server. Upload a .txt or .md file instead."}), 400
+            else:
+                pdf_bytes = uploaded_file.read()
+                reader = PdfReader(io.BytesIO(pdf_bytes))
+                for page in reader.pages[:20]:
+                    text = page.extract_text()
+                    if text:
+                        extracted_text += text + "\n"
+        else:
+            extracted_text = uploaded_file.read().decode('utf-8', errors='ignore')
+
+        clean_text = extracted_text.strip()
+        if len(clean_text) > 8000:
+            clean_text = clean_text[:8000] + "\n...[Document text truncated for processing]"
+
+        return jsonify({
+            "success": True,
+            "filename": filename,
+            "character_count": len(extracted_text),
+            "text": clean_text
+        })
+    except Exception as e:
+        return jsonify({"error": f"Failed to parse document: {str(e)}"}), 500
+
+
+@app.route("/api/research/stream", methods=["GET", "POST"])
 def stream_research():
-    topic = request.args.get("topic", "").strip()
-    api_key = request.args.get("api_key", "").strip()
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        topic = data.get("topic", "").strip()
+        compute_mode = data.get("mode", "auto").strip().lower()
+        access_token = data.get("access_token", "").strip()
+        preferred_model = data.get("model", "qwen/qwen3.6-27b").strip()
+        ollama_host = data.get("ollama_host", DEFAULT_OLLAMA_HOST).strip()
+        depth = data.get("depth", "standard").strip().lower()
+        domain_focus = data.get("domain", "auto").strip().lower()
+        tone = data.get("tone", "analyst").strip().lower()
+        document_text = data.get("document_text", "").strip()
+    else:
+        topic = request.args.get("topic", "").strip()
+        compute_mode = request.args.get("mode", "auto").strip().lower()
+        access_token = request.args.get("access_token", "").strip()
+        preferred_model = request.args.get("model", "qwen/qwen3.6-27b").strip()
+        ollama_host = request.args.get("ollama_host", DEFAULT_OLLAMA_HOST).strip()
+        depth = request.args.get("depth", "standard").strip().lower()
+        domain_focus = request.args.get("domain", "auto").strip().lower()
+        tone = request.args.get("tone", "analyst").strip().lower()
+        document_text = request.args.get("document_text", "").strip()
 
     if not topic:
         return jsonify({"error": "Topic is required"}), 400
 
-    if not api_key or not api_key.startswith("gsk_"):
-        return jsonify({"error": "A valid Groq API key (starting with gsk_) is required."}), 401
+    capacity_info = capacity_tracker.get_capacity_metrics()
+    if depth == "deep" and capacity_info["deep_dive_locked"]:
+        depth = "standard"
 
-    TEXT_MODEL_POOL = [
-        "qwen/qwen3.6-27b",
-        "openai/gpt-oss-20b",
-        "qwen/qwen3.8-27b",
-        "openai/gpt-oss-safeguard-20b"
-    ]
+    target_batch_count = 5 if depth == "deep" else (3 if depth == "quick" else 4)
+    document_attached = bool(document_text)
 
     def event_stream():
-        yield f"data: {json.dumps({'type': 'init', 'total_batches': len(BATCHES), 'model_name': 'Dynamic Router (Load Balanced)'})}\n\n"
-        
+        yield f"data: {json.dumps({'type': 'log', 'message': f'Analyzing research query & domain intent for: \"{topic}\"...'})}\n\n"
+
+        plan_prompt, batch_cnt, archetype = build_dynamic_plan(topic, depth, domain_focus, tone, document_attached)
+        yield f"data: {json.dumps({'type': 'log', 'message': f'Detected research archetype: [{archetype}]. Planning customized section structure.'})}\n\n"
+
+        section_plan = []
+
+        try:
+            plan_res, _, _, _ = execute_compute_node(
+                plan_prompt, mode=compute_mode, access_token=access_token,
+                preferred_model=preferred_model, ollama_host=ollama_host, temperature=0.1
+            )
+            
+            clean_json = plan_res.strip()
+            if "```" in clean_json:
+                match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', clean_json, re.DOTALL)
+                clean_json = match.group(1) if match else clean_json.replace("```json", "").replace("```", "").strip()
+
+            parsed = json.loads(clean_json)
+            if isinstance(parsed, list) and len(parsed) > 0:
+                for idx, sec in enumerate(parsed[:target_batch_count]):
+                    section_plan.append({
+                        "id": idx + 1,
+                        "name": sec.get("name", f"Section {idx+1}"),
+                        "desc": sec.get("description", "Detailed analytical evaluation")
+                    })
+                yield f"data: {json.dumps({'type': 'log', 'message': f'Synthesized {len(section_plan)} dynamic research sections.'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'log', 'message': f'Engine notice: ({str(e)}). Using adaptive archetype plan.'})}\n\n"
+            section_plan = []
+
+        if not section_plan:
+            fb = fallback_sections(topic, target_batch_count, archetype)
+            section_plan = [{"id": f["id"], "name": f["name"], "desc": f["desc"]} for f in fb]
+
+        batch_meta = [{"id": s["id"], "name": s["name"]} for s in section_plan]
+        yield f"data: {json.dumps({'type': 'init', 'total_batches': len(section_plan), 'batch_metadata': batch_meta})}\n\n"
+
+        accumulated_findings = []
         total_tokens = 0
+        total_p_tokens = 0
+        total_c_tokens = 0
         start_time_all = time.time()
 
-        for idx, batch in enumerate(BATCHES):
-            batch_id = batch["id"]
-            batch_name = batch["name"]
-            raw_prompt = batch["prompt"].format(topic=topic)
+        doc_context_snippet = ""
+        if document_text:
+            doc_context_snippet = f"\n\n--- ATTACHED PRIMARY DOCUMENT CONTENT ---\n{document_text[:3500]}\n--- END DOCUMENT CONTENT ---\n\n"
 
-            yield f"data: {json.dumps({'type': 'status', 'batch_id': batch_id, 'status': 'running', 'message': f'Processing Batch {batch_id}: {batch_name}...'})}\n\n"
+        # Fact grounding guidance for common tech terms to prevent 0.5B model hallucination
+        fact_grounding_prompt = ""
+        t_lower = topic.lower()
+        if "groq" in t_lower or "ollama" in t_lower:
+            fact_grounding_prompt = """\nFACTUAL DOMAIN KNOWLEDGE (MUST OBEY):
+- Groq: High-performance LPU (Language Processing Unit) AI cloud inference service and hardware API for fast LLM response generation.
+- Ollama: Open-source framework for running local open-source LLMs (Llama, Qwen, Mistral) on personal computers and local servers.
+- Groq is NOT a Python ML library; Ollama is NOT a Java library.\n"""
 
-            # 1. Estimate tokens (char count / 4)
-            estimated_tokens = len(raw_prompt) // 4 + 1000 # Expecting ~1000 token output
-            
-            # Select model dynamically from the pool based on minimum wait time
-            actual_model = "qwen/qwen3.6-27b"  # Default
-            min_wait = float('inf')
-            
-            for m_id in TEXT_MODEL_POOL:
-                lim = get_rate_limiter(m_id)
-                w_time = lim.get_wait_time(estimated_tokens)
-                if w_time < min_wait:
-                    min_wait = w_time
-                    actual_model = m_id
-                    if min_wait == 0:
-                        break # Perfect fit!
-            
-            limiter = get_rate_limiter(actual_model)
-            model_config = MODELS[actual_model]
-            
-            # Log routing decision
-            routing_msg = f"Routing: Batch {batch_id} routed to {model_config['name']} (estimated wait: {min_wait:.1f}s)."
-            yield f"data: {json.dumps({'type': 'log', 'message': routing_msg})}\n\n"
+        for idx, sec in enumerate(section_plan):
+            batch_id = sec["id"]
+            batch_name = sec["name"]
+            batch_desc = sec["desc"]
 
-            if min_wait > 0:
-                pause_msg = f"Rate Limit: Pausing queue for {min_wait:.1f}s to respect {model_config['name']} capacity limits."
-                yield f"data: {json.dumps({'type': 'log', 'message': pause_msg})}\n\n"
-                time.sleep(min_wait)
+            yield f"data: {json.dumps({'type': 'status', 'batch_id': batch_id, 'status': 'running', 'message': f'Researching Section {batch_id}: {batch_name}...'})}\n\n"
 
-            # Record slot
-            limiter.request_times.append(time.time())
+            context_summary = ""
+            if accumulated_findings:
+                context_summary = "\n\n--- PREVIOUS SECTION FINDINGS (FOR CONTEXT CONTINUITY) ---\n"
+                for prev in accumulated_findings[-2:]:
+                    short_sum = prev['summary'][:180].replace('\n', ' ')
+                    context_summary += f"• Section '{prev['name']}': {short_sum}...\n"
+                context_summary += "--- END PREVIOUS FINDINGS ---\n\n"
 
-            # 2. Call API
+            section_prompt = f"""You are a Principal AI Research Analyst conducting Section {batch_id} for the research query: "{topic}".
+
+SECTION TITLE: {batch_name}
+SECTION SCOPE: {batch_desc}
+ARCHETYPE: {archetype}
+TONE: {tone.capitalize()} research style.
+{fact_grounding_prompt}
+{doc_context_snippet}
+{context_summary}
+ANALYTICAL & REPORTING RULES:
+1. DO NOT REPEAT HEADING TITLES OR NUMBERS OVER AND OVER. State your points clearly and stop when complete.
+2. TRUTH & EVIDENCE: Explicitly separate FACT from ANALYSIS and UNCERTAINTY. Use clear phrasing ("Facts show...", "Evidence indicates...", "Estimates suggest...").
+3. QUANTITATIVE ACCURACY: Include relevant percentages, growth rates, CAGR, cost trade-offs, or numbers where applicable. Avoid false precision.
+4. DOMAIN SOURCE HIERARCHY: Format citations clearly in markdown as: [Source Title — Author/Publisher](URL). Never invent fake URLs.
+5. STRUCTURE: Use clear GFM markdown headings, bullet points, and markdown tables for comparisons or metrics when helpful. Do not mention internal prompt instructions or phase numbers.
+6. CONTINUITY: Build upon prior findings without repeating introductory definitions."""
+
             t0 = time.time()
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0"
-            }
-            payload = {
-                "model": actual_model,
-                "messages": [{"role": "user", "content": raw_prompt}],
-                "temperature": 0.2
-            }
-
             try:
-                # Query Groq
-                res = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=45)
-                
-                if res.status_code == 401 or res.status_code == 403:
-                    raise Exception(f"API Authentication Failed ({res.status_code}): {res.text}")
-                
-                if res.status_code == 429:
-                    retry_msg = f"Groq API returned HTTP 429 (Rate Limit) for {model_config['name']}. Waiting 10 seconds before retry..."
-                    yield f"data: {json.dumps({'type': 'log', 'message': retry_msg})}\n\n"
-                    time.sleep(10)
-                    res = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=45)
-                
-                res.raise_for_status()
-                res_data = res.json()
-                
-                content = res_data["choices"][0]["message"]["content"]
-                
-                # Parse usage info
-                usage = res_data.get("usage", {})
-                prompt_tokens = usage.get("prompt_tokens", len(raw_prompt) // 4)
-                completion_tokens = usage.get("completion_tokens", len(content) // 4)
-                batch_tokens = prompt_tokens + completion_tokens
-                total_tokens += batch_tokens
+                # Threaded execution with heartbeat pinging to prevent connection drops
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        execute_compute_node, section_prompt, compute_mode, access_token, preferred_model, ollama_host, 0.2
+                    )
+                    while not future.done():
+                        time.sleep(2.5)
+                        if not future.done():
+                            yield ": heartbeat\n\n"
+                    
+                    content, p_tok, c_tok, node_used = future.result()
 
-                limiter.record_usage(batch_tokens)
+                # Run Automated Quality Verification & Cleansing
+                verified_content = verify_and_cleanse_output(content, topic)
+
+                batch_tokens = p_tok + c_tok
+                total_tokens += batch_tokens
+                total_p_tokens += p_tok
+                total_c_tokens += c_tok
+
+                capacity_tracker.record_usage(batch_tokens)
+
+                concise_summary = verified_content[:250].replace('\n', ' ') + "..."
+                accumulated_findings.append({
+                    "id": batch_id,
+                    "name": batch_name,
+                    "summary": concise_summary
+                })
+
                 t1 = time.time()
                 time_taken = t1 - t0
+                metrics = capacity_tracker.get_capacity_metrics()
 
-                success_msg = f"Success: Batch {batch_id} completed via {model_config['name']} in {time_taken:.1f}s. Consumed {batch_tokens} tokens."
-                yield f"data: {json.dumps({'type': 'result', 'batch_id': batch_id, 'content': content, 'tokens': batch_tokens, 'time_taken': f'{time_taken:.1f}', 'model_name': model_config['name']})}\n\n"
-                yield f"data: {json.dumps({'type': 'log', 'message': success_msg})}\n\n"
+                success_msg = f"Section {batch_id} ({batch_name}) verified & synthesized via {node_used} in {time_taken:.1f}s ({batch_tokens} tokens)."
                 
-            except Exception as e:
-                # Fallback to qwen/qwen3.6-27b if model call fails
-                if actual_model != "qwen/qwen3.6-27b":
-                    yield f"data: {json.dumps({'type': 'log', 'message': f'Warning: Query using model {actual_model} failed ({str(e)}). Falling back to qwen/qwen3.6-27b to complete research.'})}\n\n"
-                    actual_model = "qwen/qwen3.6-27b"
-                    fallback_config = MODELS[actual_model]
-                    try:
-                        t0 = time.time()
-                        payload["model"] = "qwen/qwen3.6-27b"
-                        res = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=45)
-                        res.raise_for_status()
-                        res_data = res.json()
-                        content = res_data["choices"][0]["message"]["content"]
-                        usage = res_data.get("usage", {})
-                        batch_tokens = usage.get("prompt_tokens", len(raw_prompt)//4) + usage.get("completion_tokens", len(content)//4)
-                        total_tokens += batch_tokens
-                        get_rate_limiter(actual_model).record_usage(batch_tokens)
-                        t1 = time.time()
-                        time_taken = t1 - t0
-                        yield f"data: {json.dumps({'type': 'result', 'batch_id': batch_id, 'content': content, 'tokens': batch_tokens, 'time_taken': f'{time_taken:.1f}', 'model_name': fallback_config['name']})}\n\n"
-                        yield f"data: {json.dumps({'type': 'log', 'message': f'Success: Batch {batch_id} completed via fallback in {time_taken:.1f}s. Consumed {batch_tokens} tokens.'})}\n\n"
-                    except Exception as fallback_error:
-                        yield f"data: {json.dumps({'type': 'error', 'batch_id': batch_id, 'message': f'Error in batch {batch_id}: {str(fallback_error)}'})}\n\n"
-                        return
-                else:
-                    yield f"data: {json.dumps({'type': 'error', 'batch_id': batch_id, 'message': f'Error in batch {batch_id}: {str(e)}'})}\n\n"
-                    return
+                yield f"data: {json.dumps({'type': 'result', 'batch_id': batch_id, 'batch_name': batch_name, 'content': verified_content, 'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'tokens': batch_tokens, 'time_taken': f'{time_taken:.1f}', 'node_name': node_used, 'capacity_pct': metrics['capacity_utilized_pct'], 'deep_dive_locked': metrics['deep_dive_locked'], 'cooldown_seconds': metrics['cooldown_seconds']})}\n\n"
+                yield f"data: {json.dumps({'type': 'log', 'message': success_msg})}\n\n"
 
-            time.sleep(1.0)
+            except Exception as e:
+                err_text = str(e)
+                yield f"data: {json.dumps({'type': 'error', 'batch_id': batch_id, 'message': f'Execution error: {err_text}'})}\n\n"
+                return
+
+            time.sleep(0.4)
 
         total_time = time.time() - start_time_all
-        yield f"data: {json.dumps({'type': 'done', 'total_tokens': total_tokens, 'total_time': f'{total_time:.1f}'})}\n\n"
+        final_metrics = capacity_tracker.get_capacity_metrics()
 
-    return Response(stream_with_context(event_stream()), mimetype="text/event-stream")
+        yield f"data: {json.dumps({'type': 'done', 'total_tokens': total_tokens, 'total_prompt_tokens': total_p_tokens, 'total_completion_tokens': total_c_tokens, 'total_time': f'{total_time:.1f}', 'final_capacity_pct': final_metrics['capacity_utilized_pct']})}\n\n"
+
+    res = Response(stream_with_context(event_stream()), mimetype="text/event-stream")
+    res.headers["X-Accel-Buffering"] = "no"
+    res.headers["Cache-Control"] = "no-cache"
+    return res
 
 
 if __name__ == "__main__":

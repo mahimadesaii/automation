@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aethelgard Research Portal | Rate-Limited Batch Processing</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Aethelgard System | Autonomous AI Research Analyst</title>
     
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     
     <!-- Markdown Parser CDN -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -17,81 +17,260 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+    <!-- Mobile Sidebar Backdrop Overlay -->
+    <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
+
     <div class="app-container">
-        <!-- Sidebar Navigation / Input Form -->
-        <aside class="sidebar">
+        <!-- Sidebar Navigation / Settings Panel -->
+        <aside id="sidebar" class="sidebar">
             <div class="brand">
                 <div class="brand-logo">A</div>
                 <div class="brand-info">
                     <h1>Aethelgard</h1>
-                    <span class="subtext">Batch Research Engine</span>
+                    <span class="subtext">Engine Configuration</span>
                 </div>
+                <button type="button" id="close-sidebar-btn" class="close-sidebar-btn" title="Close Panel">✕</button>
             </div>
             
             <form id="research-form" class="research-form">
-                <div class="form-group">
-                    <label for="research-topic">Research Topic</label>
-                    <textarea 
-                        id="research-topic" 
-                        placeholder="e.g., top vendors for storage solution for an enterprise" 
-                        required
-                        rows="3"
-                    ></textarea>
+                <!-- Document / PDF Upload Group -->
+                <div class="form-group document-upload-group">
+                    <label for="document-upload-input">
+                        Attach Document / PDF 
+                        <span class="optional-tag">(Optional)</span>
+                    </label>
+                    <div class="file-upload-row">
+                        <input 
+                            type="file" 
+                            id="document-upload-input" 
+                            accept=".pdf,.txt,.md,.json,.csv"
+                            style="display: none;"
+                        />
+                        <button type="button" id="trigger-file-btn" class="btn-file-select">
+                            📁 Choose File
+                        </button>
+                        <span id="file-name-label" class="file-name-label">No document attached</span>
+                        <button type="button" id="remove-file-btn" class="btn-remove-file hidden" title="Clear document">✕</button>
+                    </div>
+                    <p id="document-status-text" class="api-key-status-text">Supports PDF, TXT, MD, CSV, JSON for document analysis</p>
                 </div>
 
+                <!-- Access Key (Optional: Defaults to Free Cloud Engine if empty) -->
                 <div class="form-group api-key-group">
-                    <label for="api-key-input">Groq API Key</label>
+                    <div class="api-key-header-row">
+                        <label for="access-token-input">Access Key</label>
+                        <label class="toggle-groq-label" title="Enable or Disable custom Access Key">
+                            <input type="checkbox" id="enable-groq-toggle" checked />
+                            <span class="toggle-text" id="toggle-groq-status">Cloud API Active</span>
+                        </label>
+                    </div>
                     <div class="api-key-input-row">
                         <input 
                             type="password" 
-                            id="api-key-input" 
-                            placeholder="gsk_..." 
+                            id="access-token-input" 
+                            placeholder="Enter custom key (or leave blank)..." 
                             autocomplete="off"
                         />
-                        <button type="button" id="save-api-key-btn" class="btn-save-key" title="Save key to browser storage">
+                        <button type="button" id="save-token-btn" class="btn-save-key" title="Save / Update key">
                             💾
                         </button>
+                        <button type="button" id="clear-token-btn" class="btn-clear-key" title="Clear key">
+                            🗑️
+                        </button>
                     </div>
-                    <p id="api-key-status" class="api-key-status-text">No key saved yet.</p>
+                    <p id="token-status-text" class="api-key-status-text">Blank = Defaulting to Free Cloud Engine</p>
+                </div>
+
+                <!-- Research Parameters Card -->
+                <div class="form-group">
+                    <label>Research Parameters</label>
+                    <div class="parameters-card">
+                        <div class="param-row">
+                            <label for="param-depth">
+                                Depth Level
+                                <span id="deep-dive-lock-badge" class="badge-lock hidden">🔒 Cooldown <span id="cooldown-timer-sec">0</span>s</span>
+                            </label>
+                            <select id="param-depth">
+                                <option value="quick">Quick (3 Sections)</option>
+                                <option value="standard" selected>Standard (4 Sections)</option>
+                                <option value="deep" id="opt-deep-dive">Deep Dive (5 Sections)</option>
+                            </select>
+                        </div>
+
+                        <div class="param-row">
+                            <label for="param-domain">Domain Focus</label>
+                            <select id="param-domain">
+                                <option value="auto" selected>Auto-Detect (Dynamic)</option>
+                                <option value="technology">Technology &amp; Engineering</option>
+                                <option value="business">Business &amp; Corporate</option>
+                                <option value="academic">Academic &amp; Research</option>
+                                <option value="general">General Overview</option>
+                            </select>
+                        </div>
+
+                        <div class="param-row">
+                            <label for="param-tone">Output Tone</label>
+                            <select id="param-tone">
+                                <option value="analyst" selected>Objective Analyst</option>
+                                <option value="technical">Technical Specialist</option>
+                                <option value="executive">Executive Briefing</option>
+                                <option value="educational">Educational Guide</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 
+                <!-- Overall System Capacity Gauge -->
                 <div class="limits-card">
-                    <h3>Dynamic Router Active</h3>
-                    <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin: 0;">
-                        Models are automatically selected and load-balanced to maximise throughput while honouring Groq rate limits.
-                    </p>
+                    <div class="token-meter-header">
+                        <h3>Overall System Capacity</h3>
+                        <span id="capacity-badge" class="badge-pct">0% Utilized</span>
+                    </div>
+                    <div class="token-bar-bg">
+                        <div id="capacity-bar-fill" class="token-bar-fill" style="width: 0%;"></div>
+                    </div>
+                    <div class="token-stats-row">
+                        <span id="capacity-pct-label"><strong>0%</strong> Utilized of 100% Capacity</span>
+                    </div>
                 </div>
                 
                 <button type="submit" id="start-btn" class="btn btn-primary">
-                    <span class="btn-text">Generate Research</span>
+                    <span class="btn-text">Apply Settings &amp; Run</span>
                     <span class="btn-spinner hidden"></span>
                 </button>
             </form>
 
             <div class="sidebar-footer">
-                <p>Powered by Groq API</p>
-                <p id="footer-key-indicator" class="api-key-indicator">Key Status: Not configured</p>
+                <p>Aethelgard System • Dynamic Research Engine</p>
+                <p id="footer-mode-indicator" class="api-key-indicator">Mode: Online Free Cloud Engine</p>
             </div>
         </aside>
 
         <!-- Main Display Panel -->
         <main class="main-content">
             <header class="main-header">
-                <h2>Portal Workspace</h2>
+                <div class="header-left">
+                    <button type="button" id="mobile-sidebar-toggle" class="mobile-sidebar-toggle" title="Toggle Settings">
+                        ⚙️ Settings
+                    </button>
+                    <a href="/" class="header-home-link" title="Return to Portal Home">
+                        <span class="header-logo-icon">A</span>
+                        <span class="header-title">Portal Workspace</span>
+                    </a>
+                </div>
+
+                <!-- Header Search Box (Appears when viewing results / monitoring) -->
+                <div id="header-search-box" class="header-search-box hidden">
+                    <input 
+                        type="text" 
+                        id="header-search-input" 
+                        class="header-search-input" 
+                        placeholder="Search another topic..."
+                    />
+                    <button type="button" id="header-search-btn" class="header-search-btn">
+                        🔍 Research
+                    </button>
+                </div>
+
                 <div id="connection-status" class="status-badge status-idle">
                     <span class="status-dot"></span>
                     <span id="status-text">Ready</span>
                 </div>
             </header>
 
-            <!-- Pre-run Dashboard placeholder -->
+            <!-- Main Home Dashboard (Single Primary Search Launcher) -->
             <div id="placeholder-panel" class="placeholder-panel">
-                <div class="placeholder-icon">🔍</div>
-                <h3>Start your Research</h3>
-                <p>Enter your Groq API key, save it, then type a research topic. The engine splits the query into 5 batches, dynamically load-balances them across models, and produces a fully-cited 5W1H Bloom's Taxonomy report.</p>
+                <div class="hero-header">
+                    <div class="hero-badge">✨ MULTI-STAGE REASONING ENGINE</div>
+                    <h2 class="hero-title">Autonomous AI Research Portal</h2>
+                    <p class="hero-subtitle">Synthesize evidence-grounded research reports across technology, business, science, finance, or custom uploaded documents.</p>
+                </div>
+
+                <!-- Primary Central Search Bar -->
+                <div class="hero-search-box">
+                    <input 
+                        type="text" 
+                        id="hero-search-input" 
+                        class="hero-search-input" 
+                        placeholder="Type any research topic (e.g., 'Compare React vs Vue', 'Analyze Tesla')..."
+                    />
+                    <button type="button" id="hero-search-btn" class="hero-search-btn">
+                        🚀 Launch Research
+                    </button>
+                </div>
+
+                <!-- Suggested Quick-Start Sample Cards -->
+                <div class="suggestions-section">
+                    <h4 class="suggestions-title">Quick-Start Exemplary Topics (Click to Research)</h4>
+                    <div class="suggestions-grid">
+                        <div class="sample-card" data-topic="Compare React vs Vue">
+                            <div class="sample-icon">⚡</div>
+                            <div class="sample-info">
+                                <h5>Compare React vs Vue</h5>
+                                <p>Performance benchmarks, DX, ecosystem maturity &amp; trade-offs</p>
+                            </div>
+                        </div>
+
+                        <div class="sample-card" data-topic="Analyze Apple financial health and business moat">
+                            <div class="sample-icon">📊</div>
+                            <div class="sample-info">
+                                <h5>Analyze Apple Moat &amp; Revenue</h5>
+                                <p>Revenue metrics, valuation, product strategy &amp; market threats</p>
+                            </div>
+                        </div>
+
+                        <div class="sample-card" data-topic="Explain quantum computing in simple terms">
+                            <div class="sample-icon">⚛️</div>
+                            <div class="sample-info">
+                                <h5>Explain Quantum Computing</h5>
+                                <p>Plain-language intuition, qubits, superposition &amp; applications</p>
+                            </div>
+                        </div>
+
+                        <div class="sample-card" data-topic="Research India's EV market growth and government policy">
+                            <div class="sample-icon">🔋</div>
+                            <div class="sample-info">
+                                <h5>India's EV Market 2026</h5>
+                                <p>Market CAGR projections, key players, battery economics &amp; risks</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Core Features Grid -->
+                <div class="features-grid">
+                    <div class="feature-item">
+                        <span class="feature-icon">🎯</span>
+                        <div>
+                            <h6>Dynamic Structure</h6>
+                            <p>Tailors section plans specifically to the query archetype without rigid templates.</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">🛡️</span>
+                        <div>
+                            <h6>Evidence Verification</h6>
+                            <p>Strictly separates facts from inferences and discloses uncertainties.</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">📈</span>
+                        <div>
+                            <h6>Quantitative Rigor</h6>
+                            <p>Calculates percentages, growth metrics, and side-by-side comparison matrices.</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">📄</span>
+                        <div>
+                            <h6>Document Grounding</h6>
+                            <p>Upload PDF/Text files to cross-check primary document evidence.</p>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <!-- Active Status Monitor (Visible when running/completed) -->
+            <!-- Active Status Monitor -->
             <div id="monitor-panel" class="monitor-panel hidden">
                 <div class="progress-section">
                     <div class="progress-info">
@@ -104,40 +283,38 @@
                 </div>
 
                 <div class="monitor-grid">
-                    <!-- Batch Step Statuses -->
                     <div class="batch-steps-card">
-                        <h3>Batch Plan Execution</h3>
+                        <h3>Section Execution Plan</h3>
                         <div id="batch-steps-list" class="batch-steps-list">
-                            <!-- Populated dynamically -->
+                            <!-- Dynamic -->
                         </div>
                     </div>
 
-                    <!-- Scheduler Live Console logs -->
                     <div class="console-card">
                         <div class="console-header">
-                            <h3>Queue Scheduler Logs</h3>
+                            <h3>System Scheduler Logs</h3>
                             <button id="clear-console-btn" class="console-action-btn">Clear</button>
                         </div>
                         <div id="console-logs" class="console-logs">
-                            <!-- Populated dynamically -->
+                            <!-- Dynamic -->
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Compiled Research Display Panel (Visible after / during processing) -->
+            <!-- Compiled Research Display Panel -->
             <div id="results-panel" class="results-panel hidden">
-                <nav class="results-nav">
+                <nav id="results-nav" class="results-nav">
                     <button class="nav-tab active" data-tab="compiled-report">Overview Report</button>
-                    <button class="nav-tab" data-tab="taxonomy-report">5W1H &amp; Bloom's</button>
-                    <button class="nav-tab" data-tab="deepdive-report">Advanced Analysis</button>
-                    <button class="nav-tab" data-tab="vendors-report">Solutions &amp; Tools</button>
+                    <div id="dynamic-tabs-container" class="dynamic-tabs-inline">
+                        <!-- Dynamic Section Tabs injected here -->
+                    </div>
                     <button class="nav-tab" data-tab="references-report">References (<span id="ref-count">0</span>)</button>
-                    <button class="nav-tab" data-tab="metrics-report">API Performance</button>
+                    <button class="nav-tab" data-tab="metrics-report">System Metrics</button>
                 </nav>
 
                 <div class="results-body">
-                    <!-- Tab 1: Combined full report -->
+                    <!-- Tab 1: Overview Report -->
                     <section id="compiled-report" class="tab-content active">
                         <div class="report-actions">
                             <button class="action-btn" onclick="window.print()">🖨️ Print / Save PDF</button>
@@ -147,76 +324,63 @@
                         </article>
                     </section>
 
-                    <!-- Tab 2: 5W1H & Bloom's -->
-                    <section id="taxonomy-report" class="tab-content">
-                        <article id="taxonomy-rendered-content" class="rendered-markdown">
-                            <!-- Rendered Batch 1, 2, 3 -->
-                        </article>
-                    </section>
+                    <!-- Dynamic Section Content Container -->
+                    <div id="dynamic-sections-content-container">
+                        <!-- Rendered Markdown Sections -->
+                    </div>
 
-                    <!-- Tab 3: Deep dive details -->
-                    <section id="deepdive-report" class="tab-content">
-                        <article id="deepdive-rendered-content" class="rendered-markdown">
-                            <!-- Rendered Batch 4 -->
-                        </article>
-                    </section>
-
-                    <!-- Tab 4: Solutions and vendors -->
-                    <section id="vendors-report" class="tab-content">
-                        <article id="vendors-rendered-content" class="rendered-markdown">
-                            <!-- Rendered Batch 5 -->
-                        </article>
-                    </section>
-
-                    <!-- Tab 5: Consolidated References -->
+                    <!-- References Tab -->
                     <section id="references-report" class="tab-content">
                         <div class="references-header">
-                            <h3>Citations & Academic Sources</h3>
-                            <p>Below are the references consolidated dynamically from all batch requests. At least 6 sources are verified.</p>
+                            <h3>Citations &amp; Source References</h3>
+                            <p>Below are references extracted dynamically from research sections.</p>
                         </div>
                         <ul id="references-list" class="references-list">
-                            <!-- Extracted links here -->
+                            <!-- References injected here -->
                         </ul>
                     </section>
 
-                    <!-- Tab 6: Performance Metrics -->
+                    <!-- System Performance Tab -->
                     <section id="metrics-report" class="tab-content">
                         <div class="metrics-grid">
                             <div class="metric-card">
                                 <span class="metric-num" id="metric-total-time">-</span>
-                                <span class="metric-lbl">Total Time Elapsed (Seconds)</span>
+                                <span class="metric-lbl">Total Time (s)</span>
                             </div>
                             <div class="metric-card">
                                 <span class="metric-num" id="metric-total-tokens">-</span>
-                                <span class="metric-lbl">Total Tokens Consumed</span>
+                                <span class="metric-lbl">Total Tokens</span>
                             </div>
                             <div class="metric-card">
-                                <span class="metric-num" id="metric-avg-tpm">-</span>
-                                <span class="metric-lbl">Calculated Tokens/Minute (TPM)</span>
+                                <span class="metric-num" id="metric-prompt-tokens">-</span>
+                                <span class="metric-lbl">Input Tokens</span>
                             </div>
                             <div class="metric-card">
-                                <span class="metric-num" id="metric-batches-run">0/5</span>
-                                <span class="metric-lbl">Batches Successfully Processed</span>
+                                <span class="metric-num" id="metric-completion-tokens">-</span>
+                                <span class="metric-lbl">Output Tokens</span>
                             </div>
                         </div>
 
                         <div class="limits-chart-card">
-                            <h3>Rate Limiting Efficiency</h3>
-                            <table class="metrics-table">
-                                <thead>
-                                    <tr>
-                                        <th>Batch Phase</th>
-                                        <th>Target Bloom's / Section</th>
-                                        <th>Active Model</th>
-                                        <th>Response Time</th>
-                                        <th>Tokens Used</th>
-                                        <th>Scheduler Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="metrics-table-body">
-                                    <!-- Populated dynamically -->
-                                </tbody>
-                            </table>
+                            <h3>Compute Node Execution &amp; Capacity Utilization</h3>
+                            <div class="table-responsive-wrapper">
+                                <table class="metrics-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Section Phase</th>
+                                            <th>Dynamic Section Title</th>
+                                            <th>Active Compute Node</th>
+                                            <th>Execution Time</th>
+                                            <th>Input Tokens</th>
+                                            <th>Output Tokens</th>
+                                            <th>Total Tokens</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="metrics-table-body">
+                                        <!-- Populated dynamically -->
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </section>
                 </div>
@@ -224,7 +388,7 @@
         </main>
     </div>
 
-    <!-- Application Logic -->
+    <!-- Application Script -->
     <script src="/static/script.js"></script>
 </body>
 </html>

@@ -1,0 +1,14 @@
+Project Titan Confidential Overview (August 2026)
+
+Key Metrics:
+- Annual Recurring Revenue (ARR): $42.5 Million (Up 45% YoY)
+- Gross Margin: 78.4%
+- Net Retention Rate: 124%
+- Core Product Engine: Quantum-Resistant Encryption Mesh
+
+Market Strategy:
+Targeting Fortune 500 financial institutions transitioning to post-quantum cryptography before 2028 regulatory deadlines.
+Main Competitor: CyberShield Inc (Lower margin at 62%, slower deployment).
+
+Risks & Dependencies:
+Dependency on custom hardware accelerators produced by TSMC. Lead time currently 18 weeks.
