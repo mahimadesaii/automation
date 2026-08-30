@@ -448,6 +448,129 @@ def get_ollama_models():
     return jsonify({"available": False, "models": [], "message": "Local compute node offline."})
 
 
+# ── Free-mode per-section endpoints (each gets its own Vercel function window) ──
+
+@app.route("/api/research/plan", methods=["POST"])
+def research_plan():
+    """
+    Returns the section plan instantly without any AI call.
+    Used by free-mode frontend so no timeout budget is wasted on planning.
+    """
+    data = request.get_json(silent=True) or {}
+    topic = data.get("topic", "").strip()
+    depth = data.get("depth", "standard").strip().lower()
+    domain_focus = data.get("domain", "auto").strip().lower()
+    tone = data.get("tone", "analyst").strip().lower()
+    document_text = data.get("document_text", "").strip()
+
+    if not topic:
+        return jsonify({"error": "Topic is required"}), 400
+
+    target_count = 5 if depth == "deep" else (3 if depth == "quick" else 4)
+    document_attached = bool(document_text)
+    archetype = classify_research_archetype(topic, document_attached)
+    sections = fallback_sections(topic, target_count, archetype)
+
+    return jsonify({
+        "archetype": archetype,
+        "sections": sections,
+        "target_count": target_count
+    })
+
+
+@app.route("/api/research/section", methods=["POST"])
+def research_section():
+    """
+    Executes a SINGLE research section and returns the result as JSON.
+    Each call gets its own fresh Vercel function window (up to 60s).
+    Used by free-mode frontend to sequence sections without a shared timeout.
+    """
+    data = request.get_json(silent=True) or {}
+    topic = data.get("topic", "").strip()
+    access_token = data.get("access_token", "").strip()
+    preferred_model = data.get("model", "qwen/qwen3.6-27b").strip()
+    ollama_host = data.get("ollama_host", DEFAULT_OLLAMA_HOST).strip()
+    compute_mode = data.get("mode", "auto").strip().lower()
+    tone = data.get("tone", "analyst").strip().lower()
+    document_text = data.get("document_text", "").strip()
+
+    section_id = data.get("section_id", 1)
+    section_name = data.get("section_name", "Research Analysis")
+    section_desc = data.get("section_desc", "")
+    archetype = data.get("archetype", "GENERAL_ANALYTICAL")
+    prev_summaries = data.get("prev_summaries", [])  # list of {name, summary}
+
+    if not topic:
+        return jsonify({"error": "Topic is required"}), 400
+
+    doc_context = ""
+    if document_text:
+        doc_context = f"\n\n--- ATTACHED PRIMARY DOCUMENT CONTENT ---\n{document_text[:3500]}\n--- END DOCUMENT CONTENT ---\n\n"
+
+    context_summary = ""
+    if prev_summaries:
+        context_summary = "\n\n--- PREVIOUS SECTION FINDINGS (FOR CONTEXT CONTINUITY) ---\n"
+        for prev in prev_summaries[-2:]:
+            short = prev.get("summary", "")[:180].replace("\n", " ")
+            context_summary += f"• Section '{prev.get('name', '')}': {short}...\n"
+        context_summary += "--- END PREVIOUS FINDINGS ---\n\n"
+
+    fact_grounding = ""
+    t_lower = topic.lower()
+    if "groq" in t_lower or "ollama" in t_lower:
+        fact_grounding = """\nFACTUAL DOMAIN KNOWLEDGE (MUST OBEY):
+- Groq: High-performance LPU AI cloud inference service for fast LLM response generation.
+- Ollama: Open-source framework for running local LLMs on personal computers.\n"""
+
+    section_prompt = f"""You are a Principal AI Research Analyst conducting Section {section_id} for the research query: "{topic}".
+
+SECTION TITLE: {section_name}
+SECTION SCOPE: {section_desc}
+ARCHETYPE: {archetype}
+TONE: {tone.capitalize()} research style.
+{fact_grounding}
+{doc_context}
+{context_summary}
+ANALYTICAL & REPORTING RULES:
+1. DO NOT REPEAT HEADING TITLES OR NUMBERS OVER AND OVER. State your points clearly and stop when complete.
+2. TRUTH & EVIDENCE: Explicitly separate FACT from ANALYSIS and UNCERTAINTY. Use clear phrasing ("Facts show...", "Evidence indicates...", "Estimates suggest...").
+3. QUANTITATIVE ACCURACY: Include relevant percentages, growth rates, CAGR, cost trade-offs, or numbers where applicable. Avoid false precision.
+4. DOMAIN SOURCE HIERARCHY: Format citations clearly in markdown as: [Source Title — Author/Publisher](URL). Never invent fake URLs.
+5. STRUCTURE: Use clear GFM markdown headings, bullet points, and markdown tables for comparisons or metrics when helpful.
+6. CONTINUITY: Build upon prior findings without repeating introductory definitions."""
+
+    t0 = time.time()
+    try:
+        content, p_tok, c_tok, node_used = execute_compute_node(
+            section_prompt, mode=compute_mode, access_token=access_token,
+            preferred_model=preferred_model, ollama_host=ollama_host, temperature=0.2
+        )
+        verified = verify_and_cleanse_output(content, topic)
+        batch_tokens = p_tok + c_tok
+        capacity_tracker.record_usage(batch_tokens)
+        time_taken = time.time() - t0
+        metrics = capacity_tracker.get_capacity_metrics()
+        concise_summary = verified[:250].replace("\n", " ") + "..."
+
+        return jsonify({
+            "success": True,
+            "section_id": section_id,
+            "section_name": section_name,
+            "content": verified,
+            "summary": concise_summary,
+            "prompt_tokens": p_tok,
+            "completion_tokens": c_tok,
+            "tokens": batch_tokens,
+            "time_taken": f"{time_taken:.1f}",
+            "node_name": node_used,
+            "capacity_pct": metrics["capacity_utilized_pct"],
+            "deep_dive_locked": metrics["deep_dive_locked"],
+            "cooldown_seconds": metrics["cooldown_seconds"]
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "section_id": section_id}), 500
+
+
 @app.route("/api/upload", methods=["POST"])
 def upload_document():
     if 'file' not in request.files:

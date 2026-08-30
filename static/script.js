@@ -463,7 +463,7 @@ document.addEventListener("DOMContentLoaded", () => {
         progressBar.style.width = "0%";
         progressPercent.textContent = "0%";
 
-        const payload = {
+        const basePayload = {
             topic: params.topic,
             access_token: params.accessToken,
             depth: params.depth,
@@ -474,12 +474,118 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (eventSource) eventSource.close();
 
-        // Use POST streaming via fetch ReadableStream
+        // ── Free mode: per-section fetch (each call gets its own Vercel timeout) ──
+        // ── Keyed mode: original fast SSE stream ──
+        const isKeyedMode = params.accessToken && params.accessToken.startsWith("gsk_");
+
+        if (!isKeyedMode) {
+            runPerSectionMode(params, basePayload);
+        } else {
+            runSSEStreamMode(basePayload);
+        }
+    }
+
+    // Per-section mode: fetch plan first, then fetch each section sequentially
+    async function runPerSectionMode(params, basePayload) {
+        try {
+            // Step 1: Get section plan (instant, no AI)
+            addConsoleLog("Analyzing research query & domain intent...", "info");
+            const planRes = await fetch("/api/research/plan", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(basePayload)
+            });
+            const planData = await planRes.json();
+            if (!planRes.ok || !planData.sections) {
+                addConsoleLog(`Plan error: ${planData.error || "Unknown error"}`, "error");
+                setUIState("error", "Failed / Incomplete");
+                return;
+            }
+
+            const archetype = planData.archetype;
+            const sections = planData.sections;
+            activeBatchCount = sections.length;
+
+            addConsoleLog(`Detected research archetype: [${archetype}]. Planning customized section structure.`, "info");
+
+            // Emit an init-like event to build the UI
+            handleSSEEvent({
+                type: "init",
+                total_batches: sections.length,
+                batch_metadata: sections.map(s => ({ id: s.id, name: s.name }))
+            });
+            addConsoleLog(`Section planner initialized ${sections.length} dynamic sections with context preservation.`, "success");
+
+            // Step 2: Execute sections one by one
+            const prevSummaries = [];
+            for (const sec of sections) {
+                handleSSEEvent({ type: "status", batch_id: sec.id, status: "running" });
+
+                const sectionPayload = {
+                    ...basePayload,
+                    section_id: sec.id,
+                    section_name: sec.name,
+                    section_desc: sec.desc || "",
+                    archetype: archetype,
+                    prev_summaries: prevSummaries
+                };
+
+                try {
+                    const secRes = await fetch("/api/research/section", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(sectionPayload)
+                    });
+                    const secData = await secRes.json();
+
+                    if (!secRes.ok || !secData.success) {
+                        const errMsg = secData.error || "Section execution failed";
+                        handleSSEEvent({ type: "error", batch_id: sec.id, message: `Execution error: ${errMsg}` });
+                        setUIState("error", "Failed / Incomplete");
+                        return;
+                    }
+
+                    // Track summary for context continuity
+                    prevSummaries.push({ name: sec.name, summary: secData.summary || "" });
+
+                    // Reuse the same result handler as SSE
+                    handleSSEEvent({
+                        type: "result",
+                        batch_id: secData.section_id,
+                        batch_name: secData.section_name,
+                        content: secData.content,
+                        prompt_tokens: secData.prompt_tokens,
+                        completion_tokens: secData.completion_tokens,
+                        tokens: secData.tokens,
+                        time_taken: secData.time_taken,
+                        node_name: secData.node_name,
+                        capacity_pct: secData.capacity_pct,
+                        deep_dive_locked: secData.deep_dive_locked,
+                        cooldown_seconds: secData.cooldown_seconds
+                    });
+                    addConsoleLog(`Section ${sec.id} (${sec.name}) verified & synthesized via ${secData.node_name} in ${secData.time_taken}s (${secData.tokens} tokens).`, "success");
+
+                } catch (err) {
+                    handleSSEEvent({ type: "error", batch_id: sec.id, message: `Network error: ${err.message}` });
+                    setUIState("error", "Failed / Incomplete");
+                    return;
+                }
+            }
+
+            // All sections done
+            handleSSEEvent({ type: "done", total_tokens: currentRunTotalTokens });
+
+        } catch (err) {
+            addConsoleLog(`Research error: ${err.message}`, "error");
+            setUIState("error", "Connection Error");
+        }
+    }
+
+    // Keyed SSE stream mode (original fast path for users with a Groq key)
+    function runSSEStreamMode(payload) {
         fetch("/api/research/stream", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
         }).then(response => {
             const reader = response.body.getReader();
@@ -497,7 +603,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split("\n\n");
-                    buffer = lines.pop(); // Keep partial line in buffer
+                    buffer = lines.pop();
 
                     for (const block of lines) {
                         const trimmed = block.trim();
@@ -525,6 +631,8 @@ document.addEventListener("DOMContentLoaded", () => {
             setUIState("error", "Connection Error");
         });
     }
+
+
 
     function handleSSEEvent(data) {
         switch (data.type) {
