@@ -211,6 +211,58 @@ def execute_groq_cloud_node(prompt, access_token, preferred_model="qwen/qwen3.6-
     engine_name = ONLINE_COMPUTE_ENGINES.get(target_model, {}).get("name", f"Groq Node ({target_model})")
     return content, p_tokens, c_tokens, engine_name
 
+def execute_aihorde_node(prompt, max_tokens=512):
+    """
+    Free anonymous text generation via AI Horde community cluster.
+    No API key or signup required — uses the universal anonymous key.
+    Automatically polls until the generation is complete.
+    """
+    AI_HORDE_URL = "https://aihorde.net/api/v2"
+    ANON_KEY = "0000000000"
+    headers = {
+        "apikey": ANON_KEY,
+        "Content-Type": "application/json",
+        "Client-Name": "Aethelgard:1.0:automade"
+    }
+    payload = {
+        "prompt": prompt,
+        "params": {
+            "max_context_length": 2048,
+            "max_length": min(max_tokens, 512),
+        }
+    }
+    try:
+        r = requests.post(
+            f"{AI_HORDE_URL}/generate/text/async",
+            json=payload,
+            headers=headers,
+            timeout=15
+        )
+        r.raise_for_status()
+        rid = r.json().get("id")
+        if not rid:
+            return None
+        # Poll up to 90 seconds (30 attempts × 3 sec each)
+        for _ in range(30):
+            time.sleep(3)
+            status = requests.get(
+                f"{AI_HORDE_URL}/generate/text/status/{rid}",
+                headers=headers,
+                timeout=10
+            ).json()
+            if status.get("done"):
+                gens = status.get("generations", [])
+                if gens:
+                    content = gens[0].get("text", "").strip()
+                    if content:
+                        p_tokens = len(prompt) // 4
+                        c_tokens = len(content) // 4
+                        return content, p_tokens, c_tokens, "AI Horde Free Engine"
+                return None
+    except Exception:
+        pass
+    return None
+
 
 def execute_compute_node(prompt, mode="auto", access_token=None, preferred_model="qwen/qwen3.6-27b", ollama_host=DEFAULT_OLLAMA_HOST, temperature=0.2):
     token_to_use = (access_token or "").strip()
@@ -253,7 +305,7 @@ def execute_compute_node(prompt, mode="auto", access_token=None, preferred_model
     if BUILTIN_SYSTEM_TOKEN and BUILTIN_SYSTEM_TOKEN.startswith("gsk_"):
         return execute_groq_cloud_node(prompt, access_token=BUILTIN_SYSTEM_TOKEN, preferred_model=preferred_model, temperature=temperature)
 
-    # Priority 3: Online Free Ollama Engine (OllamaFreeAPI - Zero installation & Zero key required)
+    # Priority 3: Online Free Ollama Engine (OllamaFreeAPI - may work on cloud servers)
     if free_online_client:
         try:
             content = free_online_client.chat(prompt)
@@ -264,7 +316,12 @@ def execute_compute_node(prompt, mode="auto", access_token=None, preferred_model
         except Exception:
             pass
 
-    raise Exception("No active compute node available. Run 'ollama serve' locally, or enter a free Groq API Key (gsk_...) in the Access Key panel.")
+    # Priority 4: AI Horde Community Cluster (Truly free, no signup, no key required)
+    result = execute_aihorde_node(prompt)
+    if result:
+        return result
+
+    raise Exception("No active compute node available. Enter a free Groq API Key (gsk_...) in the Access Key panel to enable cloud inference.")
 
 
 def classify_research_archetype(topic, document_attached=False):
