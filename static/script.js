@@ -531,12 +531,38 @@ document.addEventListener("DOMContentLoaded", () => {
                 };
 
                 try {
-                    const secRes = await fetch("/api/research/section", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(sectionPayload)
-                    });
-                    const secData = await secRes.json();
+                    // 55-second client-side abort — ensures we never hang past Vercel's 60s limit
+                    const controller = new AbortController();
+                    const abortTimer = setTimeout(() => controller.abort(), 55000);
+
+                    let secRes, secData;
+                    try {
+                        secRes = await fetch("/api/research/section", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(sectionPayload),
+                            signal: controller.signal
+                        });
+                        clearTimeout(abortTimer);
+                    } catch (fetchErr) {
+                        clearTimeout(abortTimer);
+                        // AbortError = client timeout; rethrow for outer catch to show clean message
+                        throw new Error(fetchErr.name === "AbortError"
+                            ? `Section ${sec.id} timed out — AI Horde queue is busy. Please try again.`
+                            : fetchErr.message);
+                    }
+
+                    // Guard against Vercel error pages (HTML) being served instead of JSON
+                    const ct = secRes.headers.get("content-type") || "";
+                    if (!ct.includes("application/json")) {
+                        const rawText = await secRes.text();
+                        const shortMsg = rawText.slice(0, 120).replace(/\s+/g, " ");
+                        handleSSEEvent({ type: "error", batch_id: sec.id, message: `Server error (section ${sec.id}): ${shortMsg}` });
+                        setUIState("error", "Failed / Incomplete");
+                        return;
+                    }
+
+                    secData = await secRes.json();
 
                     if (!secRes.ok || !secData.success) {
                         const errMsg = secData.error || "Section execution failed";
@@ -566,10 +592,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     addConsoleLog(`Section ${sec.id} (${sec.name}) verified & synthesized via ${secData.node_name} in ${secData.time_taken}s (${secData.tokens} tokens).`, "success");
 
                 } catch (err) {
-                    handleSSEEvent({ type: "error", batch_id: sec.id, message: `Network error: ${err.message}` });
+                    handleSSEEvent({ type: "error", batch_id: sec.id, message: err.message || `Section ${sec.id} failed` });
                     setUIState("error", "Failed / Incomplete");
                     return;
                 }
+
             }
 
             // All sections done

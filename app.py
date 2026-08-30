@@ -215,40 +215,47 @@ def execute_aihorde_node(prompt, max_tokens=512):
     """
     Free anonymous text generation via AI Horde community cluster.
     No API key or signup required — uses the universal anonymous key.
-    Automatically polls until the generation is complete.
+    Hard deadline of 42 seconds so we always return before Vercel's 60s limit.
     """
     AI_HORDE_URL = "https://aihorde.net/api/v2"
     ANON_KEY = "0000000000"
+    # Cap prompt length for AI Horde — long prompts = slow queue
+    HORDE_PROMPT_LIMIT = 1800
+    short_prompt = prompt[:HORDE_PROMPT_LIMIT] if len(prompt) > HORDE_PROMPT_LIMIT else prompt
+
     headers = {
         "apikey": ANON_KEY,
         "Content-Type": "application/json",
         "Client-Name": "Aethelgard:1.0:automade"
     }
     payload = {
-        "prompt": prompt,
+        "prompt": short_prompt,
         "params": {
             "max_context_length": 2048,
             "max_length": min(max_tokens, 512),
         }
     }
+    deadline = time.time() + 42  # Hard deadline: must finish before Vercel cuts us off
     try:
         r = requests.post(
             f"{AI_HORDE_URL}/generate/text/async",
             json=payload,
             headers=headers,
-            timeout=15
+            timeout=10
         )
         r.raise_for_status()
         rid = r.json().get("id")
         if not rid:
             return None
-        # Poll up to 90 seconds (30 attempts × 3 sec each)
-        for _ in range(30):
+        # Poll until done or deadline hit
+        while time.time() < deadline:
             time.sleep(3)
+            if time.time() >= deadline:
+                break
             status = requests.get(
                 f"{AI_HORDE_URL}/generate/text/status/{rid}",
                 headers=headers,
-                timeout=10
+                timeout=8
             ).json()
             if status.get("done"):
                 gens = status.get("generations", [])
@@ -259,6 +266,14 @@ def execute_aihorde_node(prompt, max_tokens=512):
                         c_tokens = len(content) // 4
                         return content, p_tokens, c_tokens, "AI Horde Free Engine"
                 return None
+        # Deadline hit — cancel the pending request gracefully
+        try:
+            requests.delete(
+                f"{AI_HORDE_URL}/generate/text/status/{rid}",
+                headers=headers, timeout=5
+            )
+        except Exception:
+            pass
     except Exception:
         pass
     return None
