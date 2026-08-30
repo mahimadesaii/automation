@@ -23,6 +23,13 @@ except Exception:
 # Load environment variables from .env if present
 load_dotenv()
 
+# Try importing OllamaFreeAPI for free unlimited online inference
+try:
+    from ollamafreeapi import OllamaFreeAPI
+    free_online_client = OllamaFreeAPI()
+except Exception:
+    free_online_client = None
+
 app = Flask(__name__)
 
 # System Configurations & Endpoints
@@ -245,6 +252,17 @@ def execute_compute_node(prompt, mode="auto", access_token=None, preferred_model
     # Fallback to system key if available and no explicit access key was passed
     if BUILTIN_SYSTEM_TOKEN and BUILTIN_SYSTEM_TOKEN.startswith("gsk_"):
         return execute_groq_cloud_node(prompt, access_token=BUILTIN_SYSTEM_TOKEN, preferred_model=preferred_model, temperature=temperature)
+
+    # Priority 3: Online Free Ollama Engine (OllamaFreeAPI - Zero installation & Zero key required)
+    if free_online_client:
+        try:
+            content = free_online_client.chat(prompt)
+            if content:
+                p_tokens = len(prompt) // 4
+                c_tokens = len(content) // 4
+                return content, p_tokens, c_tokens, "Online Free Engine (Ollama)"
+        except Exception:
+            pass
 
     raise Exception("No active compute node available. Run 'ollama serve' locally, or enter a free Groq API Key (gsk_...) in the Access Key panel.")
 
