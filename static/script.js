@@ -24,6 +24,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const toggleGroqStatus = document.getElementById("toggle-groq-status");
     const tokenStatusText = document.getElementById("token-status-text");
 
+    const ollamaHostInput = document.getElementById("ollama-host-input");
+    const saveOllamaBtn = document.getElementById("save-ollama-btn");
+
     // File Upload DOM Elements
     const documentUploadInput = document.getElementById("document-upload-input");
     const triggerFileBtn = document.getElementById("trigger-file-btn");
@@ -110,6 +113,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // ── Token & Key Storage ──────────────────────────────────────────────────
     const LS_KEY = "aethelgard_access_token";
     const LS_ENABLED = "aethelgard_groq_enabled";
+    const LS_OLLAMA_HOST = "aethelgard_ollama_host";
 
     function loadSavedConfig() {
         const isEnabled = localStorage.getItem(LS_ENABLED) !== "false";
@@ -123,6 +127,11 @@ document.addEventListener("DOMContentLoaded", () => {
             updateKeyStatusDisplay();
         } else {
             updateKeyStatusDisplay();
+        }
+
+        const storedOllama = localStorage.getItem(LS_OLLAMA_HOST);
+        if (storedOllama && ollamaHostInput) {
+            ollamaHostInput.value = storedOllama;
         }
 
         checkSystemCapacity();
@@ -196,6 +205,19 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             updateKeyStatusDisplay();
             addConsoleLog("Disabled & cleared Groq API Key. Engine set to Local Ollama.", "warning");
+        });
+    }
+
+    if (saveOllamaBtn && ollamaHostInput) {
+        saveOllamaBtn.addEventListener("click", () => {
+            const raw = ollamaHostInput.value.trim();
+            if (raw) {
+                localStorage.setItem(LS_OLLAMA_HOST, raw);
+                addConsoleLog("Updated Ollama Host URL.", "success");
+            } else {
+                localStorage.removeItem(LS_OLLAMA_HOST);
+                addConsoleLog("Reset Ollama Host to default.", "info");
+            }
         });
     }
 
@@ -466,6 +488,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const payload = {
             topic: params.topic,
             access_token: params.accessToken,
+            ollama_host: ollamaHostInput ? ollamaHostInput.value.trim() : "",
             depth: params.depth,
             domain: params.domain,
             tone: params.tone,
