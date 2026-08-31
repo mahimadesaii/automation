@@ -420,9 +420,11 @@ textarea {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 28px;
+    padding: 0 24px;
     flex-shrink: 0;
-    gap: 16px;
+    gap: 12px;
+    width: 100%;
+    overflow: hidden;
 }
 
 .header-home-link {
@@ -431,6 +433,7 @@ textarea {
     gap: 8px;
     text-decoration: none;
     color: var(--text-primary);
+    min-width: 0;
 }
 
 .header-logo-icon {
@@ -445,12 +448,16 @@ textarea {
     font-family: var(--font-heading);
     font-weight: 700;
     font-size: 14px;
+    flex-shrink: 0;
 }
 
 .header-title {
     font-family: var(--font-heading);
     font-size: 16px;
     font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .header-search-box {
@@ -464,6 +471,8 @@ textarea {
     max-width: 420px;
     width: 100%;
     transition: border-color 0.2s;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .header-search-box:focus-within {
@@ -477,6 +486,7 @@ textarea {
     font-size: 12px;
     padding: 4px 8px;
     width: 100%;
+    min-width: 0;
 }
 
 .header-search-btn {
@@ -490,10 +500,7 @@ textarea {
     padding: 5px 12px;
     cursor: pointer;
     white-space: nowrap;
-}
-
-.header-search-btn:hover {
-    background-color: var(--primary-hover);
+    flex-shrink: 0;
 }
 
 .main-header h2 {
@@ -511,12 +518,24 @@ textarea {
     border-radius: 100px;
     font-size: 12px;
     font-weight: 500;
+    flex-shrink: 0;
+    max-width: 220px;
+    min-width: 0;
+}
+
+#status-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    max-width: 160px;
 }
 
 .status-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
+    flex-shrink: 0;
 }
 
 .status-idle {
@@ -1330,14 +1349,23 @@ textarea {
         top: 0;
         left: -380px;
         bottom: 0;
-        z-index: 100;
-        width: 340px;
+        z-index: 1000;
+        width: 85vw;
+        max-width: 320px;
+        height: 100vh;
+        height: 100dvh;
         transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: var(--shadow-lg);
+        padding: 20px 16px;
+        overflow-y: auto;
     }
 
     .sidebar.open {
         left: 0;
+    }
+
+    .sidebar-overlay {
+        z-index: 999;
     }
 
     .mobile-sidebar-toggle, .close-sidebar-btn {
@@ -1346,61 +1374,133 @@ textarea {
         justify-content: center;
     }
 
+    .close-sidebar-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background-color: var(--bg-card);
+        border: 1px solid var(--border);
+        font-size: 16px;
+        color: var(--text-secondary);
+        margin-left: auto;
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+
     .monitor-grid {
         grid-template-columns: 1fr;
         height: auto;
-        min-height: 200px;
+        gap: 12px;
+    }
+
+    .batch-steps-card, .console-card {
+        min-height: 120px;
+        max-height: 180px;
     }
 }
 
 @media (max-width: 768px) {
     .main-header {
-        padding: 0 16px;
+        padding: 0 12px;
         height: 56px;
+        gap: 8px;
     }
 
-    .main-header h2 {
-        font-size: 15px;
+    .header-left {
+        gap: 6px;
+    }
+
+    .mobile-sidebar-toggle {
+        padding: 5px 8px;
+        font-size: 11px;
+        white-space: nowrap;
+    }
+
+    .header-home-link {
+        gap: 6px;
+    }
+
+    .header-title {
+        font-size: 13px;
+        max-width: 110px;
+    }
+
+    .header-search-box {
+        max-width: 220px;
+        padding: 2px 4px;
+    }
+
+    .header-search-input {
+        font-size: 11px;
+        padding: 2px 4px;
+    }
+
+    .header-search-btn {
+        padding: 4px 8px;
+        font-size: 10px;
+    }
+
+    .status-badge {
+        font-size: 10px;
+        padding: 3px 8px;
+        max-width: 120px;
+        gap: 5px;
+    }
+
+    #status-text {
+        max-width: 80px;
     }
 
     .results-nav {
-        padding: 0 16px;
+        padding: 0 12px;
+        scrollbar-width: none;
+    }
+    
+    .results-nav::-webkit-scrollbar {
+        display: none;
+    }
+
+    .nav-tab {
+        padding: 10px 8px;
+        font-size: 12px;
     }
 
     .results-body {
-        padding: 16px;
+        padding: 14px 12px;
     }
 
     .monitor-panel {
-        padding: 14px 16px;
+        padding: 12px;
     }
 
     .metrics-grid {
         grid-template-columns: repeat(2, 1fr);
-        gap: 10px;
+        gap: 8px;
     }
 
     .sidebar {
-        width: 100%;
-        max-width: 320px;
+        width: 88vw;
+        max-width: 310px;
     }
 
     .placeholder-panel {
-        padding: 24px 16px;
+        padding: 20px 12px;
     }
 
     .hero-title {
-        font-size: 22px;
+        font-size: 20px;
     }
 
     .hero-search-box {
         flex-direction: column;
         padding: 8px;
+        gap: 8px;
     }
 
     .hero-search-btn {
         height: 40px;
         width: 100%;
+        font-size: 13px;
     }
 
     .suggestions-grid {
@@ -1413,6 +1513,39 @@ textarea {
 }
 
 @media (max-width: 480px) {
+    .main-header {
+        padding: 0 8px;
+        gap: 6px;
+    }
+
+    .header-title {
+        display: none; /* Hide 'Portal Workspace' text on tiny screens to preserve space for icon, search, & status */
+    }
+
+    .mobile-sidebar-toggle {
+        font-size: 10px;
+        padding: 4px 6px;
+    }
+
+    .header-search-box {
+        max-width: 150px;
+    }
+
+    .header-search-btn {
+        padding: 3px 6px;
+        font-size: 10px;
+    }
+
+    .status-badge {
+        padding: 3px 6px;
+        gap: 4px;
+        max-width: 95px;
+    }
+
+    #status-text {
+        max-width: 60px;
+    }
+
     .metrics-grid {
         grid-template-columns: 1fr;
     }
@@ -1424,11 +1557,6 @@ textarea {
 
     .param-row select {
         width: 100%;
-    }
-
-    .status-badge {
-        font-size: 11px;
-        padding: 4px 8px;
     }
 }
 
