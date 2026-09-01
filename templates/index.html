@@ -314,11 +314,7 @@
             <div id="results-panel" class="results-panel hidden">
                 <nav id="results-nav" class="results-nav">
                     <button class="nav-tab active" data-tab="compiled-report">Overview Report</button>
-                    <div id="dynamic-tabs-container" class="dynamic-tabs-inline">
-                        <!-- Dynamic Section Tabs injected here -->
-                    </div>
                     <button class="nav-tab" data-tab="references-report">References (<span id="ref-count">0</span>)</button>
-                    <button class="nav-tab" data-tab="metrics-report">System Metrics</button>
                 </nav>
 
                 <div class="results-body">
@@ -348,49 +344,7 @@
                         </ul>
                     </section>
 
-                    <!-- System Performance Tab -->
-                    <section id="metrics-report" class="tab-content">
-                        <div class="metrics-grid">
-                            <div class="metric-card">
-                                <span class="metric-num" id="metric-total-time">-</span>
-                                <span class="metric-lbl">Total Time (s)</span>
-                            </div>
-                            <div class="metric-card">
-                                <span class="metric-num" id="metric-total-tokens">-</span>
-                                <span class="metric-lbl">Total Tokens</span>
-                            </div>
-                            <div class="metric-card">
-                                <span class="metric-num" id="metric-prompt-tokens">-</span>
-                                <span class="metric-lbl">Input Tokens</span>
-                            </div>
-                            <div class="metric-card">
-                                <span class="metric-num" id="metric-completion-tokens">-</span>
-                                <span class="metric-lbl">Output Tokens</span>
-                            </div>
-                        </div>
-
-                        <div class="limits-chart-card">
-                            <h3>Compute Node Execution &amp; Capacity Utilization</h3>
-                            <div class="table-responsive-wrapper">
-                                <table class="metrics-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Section Phase</th>
-                                            <th>Dynamic Section Title</th>
-                                            <th>Active Compute Node</th>
-                                            <th>Execution Time</th>
-                                            <th>Input Tokens</th>
-                                            <th>Output Tokens</th>
-                                            <th>Total Tokens</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="metrics-table-body">
-                                        <!-- Populated dynamically -->
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </section>
+                    
                 </div>
             </div>
         </main>

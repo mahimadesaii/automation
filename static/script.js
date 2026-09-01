@@ -703,22 +703,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     `;
                     batchStepsList.appendChild(stepItem);
 
-                    const tabBtn = document.createElement("button");
-                    tabBtn.className = "nav-tab";
-                    tabBtn.setAttribute("data-tab", `sec-tab-${bId}`);
-                    tabBtn.textContent = bName;
-                    dynamicTabsContainer.appendChild(tabBtn);
 
-                    const secContainer = document.createElement("section");
-                    secContainer.id = `sec-tab-${bId}`;
-                    secContainer.className = "tab-content";
-                    secContainer.innerHTML = `
-                        <div class="section-header-badge">Section ${bId} • ${escapeHtml(bName)}</div>
-                        <article id="sec-rendered-content-${bId}" class="rendered-markdown">
-                            <p class="placeholder-text">Synthesizing content with context continuity...</p>
-                        </article>
-                    `;
-                    dynamicSectionsContentContainer.appendChild(secContainer);
                 });
                 break;
 
