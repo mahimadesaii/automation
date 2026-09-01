@@ -26,13 +26,25 @@ def clean_html_content(raw_html: str) -> str:
         return ""
     if BS4_AVAILABLE:
         soup = BeautifulSoup(raw_html, "html.parser")
-        for element in soup(["script", "style", "nav", "footer", "header", "aside", "noscript", "form", "svg", "button", "iframe"]):
+        for element in soup(["script", "style", "nav", "footer", "header", "aside", "noscript", "form", "svg", "button", "iframe", "dialog", "menu"]):
+            element.decompose()
+        # Remove common ad/cookie/nav class/id blocks
+        for element in soup.find_all(class_=re.compile(r'nav|cookie|banner|footer|header|menu|sidebar|ad-container|social|sharing', re.I)):
             element.decompose()
         text = soup.get_text(separator=" ")
     else:
-        text = re.sub(r'<script.*?>.*?</script>', '', raw_html, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<style.*?>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<(script|style|nav|footer|header|aside|noscript|form|svg|button|iframe).*?>.*?</\1>', '', raw_html, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'<[^>]+>', ' ', text)
+    
+    # Strip site boilerplate & search metadata noise
+    boilerplate_patterns = [
+        r'DuckDuckGo\s*', r'Search\s*Results', r'All\s*Rights\s*Reserved',
+        r'Cookie\s*Policy', r'Privacy\s*Policy', r'Terms\s*of\s*Service',
+        r'Accept\s*Cookies', r'Subscribe\s*to\s*newsletter', r'Share\s*on\s*Twitter'
+    ]
+    for pattern in boilerplate_patterns:
+        text = re.sub(pattern, ' ', text, flags=re.IGNORECASE)
+
     lines = (line.strip() for line in text.splitlines())
     chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
     cleaned_text = ' '.join(chunk for chunk in chunks if chunk)
@@ -279,6 +291,74 @@ def search_duckduckgo(query: str, max_results: int = 8) -> list:
     return results
 
 
+def chunk_document_semantically(content: str, max_words: int = 250) -> list:
+    """
+    Chunk documents semantically respecting sentence and paragraph boundaries.
+    Never splits sentences mid-clause or mid-word.
+    """
+    if not content:
+        return []
+    
+    raw_sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', content) if s.strip()]
+    if not raw_sentences:
+        return [content] if content.strip() else []
+
+    chunks = []
+    current_chunk = []
+    current_word_count = 0
+
+    for sent in raw_sentences:
+        sent_words = len(sent.split())
+        if current_word_count + sent_words > max_words and current_chunk:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = [sent]
+            current_word_count = sent_words
+        else:
+            current_chunk.append(sent)
+            current_word_count += sent_words
+
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+
+    return chunks
+
+
+def build_source_objects(results: list) -> list:
+    """
+    Preserves source identity boundaries and attaches semantic chunks and structured metadata.
+    Every source object retains: sourceId, sourceTitle, sourceUrl, chunks.
+    """
+    structured_sources = []
+    for idx, r in enumerate(results, 1):
+        src_id = f"src_{idx}"
+        title = r.get("title", "Source").replace("\n", " ").strip()
+        url = r.get("url", "").strip()
+        raw_content = (r.get("content") or r.get("snippet", "")).strip()
+
+        chunks_text = chunk_document_semantically(raw_content, max_words=200)
+        chunks = []
+        for pos, c_text in enumerate(chunks_text):
+            chunks.append({
+                "chunkId": f"{src_id}_c{pos}",
+                "chunkPosition": pos,
+                "content": c_text
+            })
+
+        structured_source = {
+            "sourceId": src_id,
+            "sourceTitle": title,
+            "sourceUrl": url,
+            "pubDate": r.get("pub_date", ""),
+            "content": raw_content,
+            "chunks": chunks
+        }
+        structured_sources.append(structured_source)
+        r["sourceId"] = src_id
+        r["chunks"] = chunks
+
+    return structured_sources
+
+
 def deduplicate_sources(results: list, similarity_threshold: float = 0.78) -> list:
     """Drops sources over ~78% word-overlap similarity to an already included source."""
     deduped = []
@@ -305,7 +385,7 @@ def deduplicate_sources(results: list, similarity_threshold: float = 0.78) -> li
     return deduped
 
 
-def execute_live_research(query: str, tavily_key: str = "", brave_key: str = "", max_results: int = 12) -> dict:
+def execute_live_research(query: str, tavily_key: str = "", brave_key: str = "", max_results: int = 12, archetype: str = "GENERAL_ANALYTICAL", **kwargs) -> dict:
     tavily_key = tavily_key or os.environ.get("TAVILY_API_KEY", "").strip()
     brave_key = brave_key or os.environ.get("BRAVE_API_KEY", "").strip()
 
@@ -402,13 +482,16 @@ def execute_live_research(query: str, tavily_key: str = "", brave_key: str = "",
             "error": None
         }
 
+    # === BUILD STRUCTURED SOURCE OBJECTS & SEMANTIC CHUNKS ===
+    structured_sources = build_source_objects(results)
+
     # === BUILD RICH CONTEXT STRING ===
     context_blocks = []
-    for idx, r in enumerate(results[:10], 1):
-        title = (r.get("title") or "Source").replace("\n", " ")
-        url = r.get("url", "")
-        content = (r.get("content") or r.get("snippet", "")).strip()
-        pub_date = r.get("pub_date", "")
+    for idx, src in enumerate(structured_sources[:10], 1):
+        title = src["sourceTitle"]
+        url = src["sourceUrl"]
+        content = src["content"]
+        pub_date = src.get("pubDate", "")
         date_str = f" (Published: {pub_date})" if pub_date else ""
         context_blocks.append(f"[Source {idx}]: {title}{date_str}\nURL: {url}\nCONTENT: {content}\n")
 

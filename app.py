@@ -144,6 +144,17 @@ def verify_and_cleanse_output(content: str, topic: str = "") -> str:
         line_lower = stripped.lower()
         if any(b.lower() in line_lower for b in banned_phrases):
             continue
+        
+        # Filter raw source/search metadata leaks
+        if (
+            re.match(r"^\[Source\s+\d+\]:", stripped) or
+            stripped.startswith("URL: http") or
+            stripped.startswith("CONTENT:") or
+            stripped.startswith("NEWS HEADLINES RETRIEVED:") or
+            stripped.startswith("> [!NOTE] **General Knowledge Mode**")
+        ):
+            continue
+
         # Sub-heading dedup (##, ###, **Bold**, numbered items)
         h_match = (
             re.match(r"^#{1,4}\s+(.+)$", stripped) or
@@ -401,11 +412,21 @@ Output ONLY valid JSON array in this exact format:
             {"id": 3, "name": "Market Dynamics & Strategic Takeaways", "desc": f"Sector developments and career/market insights."}
         ][:target_count]
 
-    else:
+    elif any(k in topic.lower() for k in ["hash", "crypto", "algorithm", "security", "cipher", "encryption"]):
         return [
-            {"id": 1, "name": "Foundational Context & Current Landscape", "desc": f"Overview and verified current state of {clean_topic}."},
-            {"id": 2, "name": "Core Data Analysis & Operational Metrics", "desc": f"Empirical statistics and data breakdown for {clean_topic}."},
-            {"id": 3, "name": "Strategic Implications & Industry Outlook", "desc": f"Future trajectory and strategic conclusions for {clean_topic}."}
+            {"id": 1, "name": "Foundational Principles & Mechanics", "desc": f"Core mathematical and algorithmic mechanics of {clean_topic}."},
+            {"id": 2, "name": "Major Algorithms & Technical Implementations", "desc": f"Detailed evaluation of key algorithm variants and standards for {clean_topic}."},
+            {"id": 3, "name": "Cryptocurrency & Real-World Applications", "desc": f"Practical applications, blockchain consensus, and deployment in {clean_topic}."},
+            {"id": 4, "name": "Security Vulnerabilities & Future Developments", "desc": f"Cryptanalytic risks, performance trade-offs, and future outlook for {clean_topic}."}
+        ][:target_count]
+
+    else:
+        topic_title = clean_topic.title()
+        return [
+            {"id": 1, "name": f"Foundations & Background of {topic_title}", "desc": f"Overview and verified fundamentals of {clean_topic}."},
+            {"id": 2, "name": f"Key Components & Technical Architecture", "desc": f"Technical breakdown and core mechanisms of {clean_topic}."},
+            {"id": 3, "name": f"Practical Applications & Performance Benchmarks", "desc": f"Real-world use cases and performance benchmarks for {clean_topic}."},
+            {"id": 4, "name": f"Security, Challenges & Future Outlook", "desc": f"Key risks, open challenges, and future trajectory for {clean_topic}."}
         ][:target_count]
 
 
@@ -824,6 +845,19 @@ def stream_research():
 
             yield f"data: {json.dumps({'type': 'status', 'batch_id': batch_id, 'status': 'running', 'message': f'Synthesizing Section {batch_id}: {batch_name}...'})}\n\n"
 
+            # Per-section targeted context retrieval
+            sec_clean_topic = re.sub(r'^(?:Compare|Explain|Research|Study|Analysis\s+of)\s+', '', topic, flags=re.IGNORECASE).strip()
+            sec_focus = batch_name.split('(')[0].split(':')[0].strip()
+            sec_query = f"{sec_clean_topic} {sec_focus}".strip() if idx > 0 else topic
+            
+            if idx == 0:
+                sec_context = search_context
+            else:
+                sec_retrieval = execute_live_research(sec_query, tavily_key=tavily_key, brave_key=brave_key)
+                sec_context = sec_retrieval.get("context_text", "").strip() if sec_retrieval.get("success") else search_context
+            if not sec_context:
+                sec_context = search_context
+
             context_summary = ""
             if accumulated_findings:
                 context_summary = "\n\n--- PREVIOUS SECTION SUMMARY (DO NOT REPEAT THESE TOPICS) ---\n"
@@ -857,7 +891,7 @@ def stream_research():
 
             user_prompt = (
                 f'TOPIC: "{topic}"\n\n'
-                f'CONTEXT (reference only, do not copy verbatim):\n---\n{search_context[:3000]}\n---\n\n'
+                f'CONTEXT (reference only, do not copy verbatim):\n---\n{sec_context[:3000]}\n---\n\n'
                 + (f'ALREADY WRITTEN (DO NOT REPEAT THESE FACTS):\n{context_summary}\n' if context_summary else '')
                 + f'NOW WRITE THIS SECTION (continue from the heading below, do not rewrite it):\n'
                 + section_header

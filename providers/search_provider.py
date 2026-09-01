@@ -9,5 +9,5 @@ class BrowserSearchProvider:
         # Browser Search is available as long as network HTTP requests succeed
         return True
 
-    def search(self, query: str, archetype: str = "GENERAL_ANALYTICAL") -> tuple:
+    def search(self, query: str, archetype: str = "GENERAL_ANALYTICAL") -> dict:
         return execute_live_research(query, archetype=archetype)
