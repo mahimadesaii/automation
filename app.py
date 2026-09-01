@@ -521,7 +521,7 @@ def research_section():
     data = request.get_json(silent=True) or {}
     topic = data.get("topic", "").strip()
     access_token = data.get("access_token", "").strip()
-    preferred_model = data.get("model", "qwen/qwen3.6-27b").strip()
+    preferred_model = data.get("model", "llama-3.3-70b-versatile").strip()
     ollama_host = data.get("ollama_host", DEFAULT_OLLAMA_HOST).strip()
     tone = data.get("tone", "analyst").strip().lower()
     document_text = data.get("document_text", "").strip()
@@ -729,7 +729,7 @@ def stream_research():
         data = request.get_json(silent=True) or {}
         topic = data.get("topic", "").strip()
         access_token = data.get("access_token", "").strip()
-        preferred_model = data.get("model", "qwen/qwen3.6-27b").strip()
+        preferred_model = data.get("model", "llama-3.3-70b-versatile").strip()
         ollama_host = data.get("ollama_host", DEFAULT_OLLAMA_HOST).strip()
         depth = data.get("depth", "standard").strip().lower()
         tone = data.get("tone", "analyst").strip().lower()
