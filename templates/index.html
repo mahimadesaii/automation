@@ -83,16 +83,24 @@
 
                 <!-- Research Parameters Card -->
                 <div class="form-group">
-                    <label>Research Parameters</label>
-                    <div class="parameters-card">
+                    <div class="api-key-header-row">
+                        <label>Research Parameters</label>
+                        <label class="toggle-groq-label" title="Enable or Disable strict section parameters">
+                            <input type="checkbox" id="enable-params-toggle" checked />
+                            <span class="toggle-text" id="toggle-params-status">Parameters Active</span>
+                        </label>
+                    </div>
+                    <div class="parameters-card" id="parameters-card">
                         <div class="param-row">
                             <label for="param-depth">
                                 Depth Level
                                 <span id="deep-dive-lock-badge" class="badge-lock hidden">🔒 Cooldown <span id="cooldown-timer-sec">0</span>s</span>
                             </label>
                             <select id="param-depth">
+                                <option value="auto" selected>⚡ Adaptive / AI Auto (1-2+ Sections)</option>
+                                <option value="concise">Concise Briefing (1-2 Sections)</option>
                                 <option value="quick">Quick (3 Sections)</option>
-                                <option value="standard" selected>Standard (4 Sections)</option>
+                                <option value="standard">Standard (4 Sections)</option>
                                 <option value="deep" id="opt-deep-dive">Deep Dive (5 Sections)</option>
                             </select>
                         </div>

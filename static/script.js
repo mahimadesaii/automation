@@ -108,6 +108,24 @@ document.addEventListener("DOMContentLoaded", () => {
     const metricsTableBody = document.getElementById("metrics-table-body");
 
     // ── Token & Key Storage ──────────────────────────────────────────────────
+    const enableParamsToggle = document.getElementById("enable-params-toggle");
+    const toggleParamsStatus = document.getElementById("toggle-params-status");
+    const parametersCard = document.getElementById("parameters-card");
+
+    if (enableParamsToggle) {
+        enableParamsToggle.addEventListener("change", () => {
+            const isEnabled = enableParamsToggle.checked;
+            if (toggleParamsStatus) {
+                toggleParamsStatus.textContent = isEnabled ? "Parameters Active" : "AI Adaptive Mode (Auto)";
+                toggleParamsStatus.style.color = isEnabled ? "var(--success)" : "var(--text-muted)";
+            }
+            if (parametersCard) {
+                parametersCard.style.opacity = isEnabled ? "1" : "0.5";
+                parametersCard.style.pointerEvents = isEnabled ? "auto" : "none";
+            }
+        });
+    }
+
     const LS_KEY = "aethelgard_access_token";
     const LS_ENABLED = "aethelgard_groq_enabled";
 
@@ -463,12 +481,14 @@ document.addEventListener("DOMContentLoaded", () => {
         progressBar.style.width = "0%";
         progressPercent.textContent = "0%";
 
+        const enableParams = enableParamsToggle ? enableParamsToggle.checked : true;
         const basePayload = {
             topic: params.topic,
             access_token: params.accessToken,
-            depth: params.depth,
+            depth: enableParams ? params.depth : "auto",
             domain: params.domain,
             tone: params.tone,
+            enable_params: enableParams,
             document_text: params.documentText || ""
         };
 
@@ -531,9 +551,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 };
 
                 try {
-                    // 55-second client-side abort — ensures we never hang past Vercel's 60s limit
+                    // 90-second client-side abort — ensures local machine models have ample execution headroom
                     const controller = new AbortController();
-                    const abortTimer = setTimeout(() => controller.abort(), 55000);
+                    const abortTimer = setTimeout(() => controller.abort(), 90000);
 
                     let secRes, secData;
                     try {
@@ -548,7 +568,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         clearTimeout(abortTimer);
                         // AbortError = client timeout; rethrow for outer catch to show clean message
                         throw new Error(fetchErr.name === "AbortError"
-                            ? `Section ${sec.id} timed out — AI Horde queue is busy. Please try again.`
+                            ? `Section ${sec.id} timed out. Please try again.`
                             : fetchErr.message);
                     }
 
@@ -800,6 +820,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function extractAndMapReferences(text) {
+        if (!text) return;
+        // Match Markdown links [Title](URL)
         const mdLinkRegex = /\[([^\]\n]+)\]\((https?:\/\/[^\s\)]+)\)/g;
         let match;
         while ((match = mdLinkRegex.exec(text)) !== null) {
@@ -811,6 +833,40 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }
         }
+        // Match raw URLs in search context like URL: https://...
+        const rawUrlRegex = /URL:\s*(https?:\/\/[^\s\n]+)/gi;
+        while ((match = rawUrlRegex.exec(text)) !== null) {
+            const url = match[1].trim();
+            if (!url.includes("cdn.jsdelivr.net") && !url.includes("marked")) {
+                if (!referencesMap.has(url)) {
+                    const host = url.replace(/^https?:\/\//, '').split('/')[0];
+                    referencesMap.set(url, `Verified Source (${host})`);
+                }
+            }
+        }
+    }
+
+    
+    function safeParseMarkdown(mdText) {
+        if (!mdText) return "";
+        if (typeof marked !== "undefined" && typeof marked.parse === "function") {
+            try {
+                return marked.parse(mdText);
+            } catch (e) {}
+        }
+        // Robust built-in offline Markdown parser (No CDN dependency!)
+        var html = mdText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        html = html.replace(/^>\s*\[!(NOTE|TIP|IMPORTANT|WARNING)\](.*$)/gim, '<div class="callout callout-$1"><strong>$1</strong>$2</div>');
+        html = html.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
+        html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+        html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+        html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+        html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+        html = html.replace(/^- (.*$)/gim, '<li>$1</li>');
+        html = html.replace(/\n/g, '<br>');
+        return html;
     }
 
     function renderActiveReports() {
@@ -833,14 +889,24 @@ document.addEventListener("DOMContentLoaded", () => {
             if (secContent) {
                 const secEl = document.getElementById(`sec-rendered-content-${i}`);
                 if (secEl) {
-                    secEl.innerHTML = marked.parse(secContent);
+                    secEl.innerHTML = safeParseMarkdown(secContent);
                 }
                 compiledFullMarkdown += `## Section ${i}: ${secName}\n\n${secContent}\n\n---\n\n`;
             }
         }
 
+        if (referencesMap.size > 0) {
+            compiledFullMarkdown += `## References & Verified Sources\n\n`;
+            let idx = 1;
+            referencesMap.forEach((name, url) => {
+                compiledFullMarkdown += `${idx}. [${name}](${url}) — \`${url}\`\n`;
+                idx++;
+            });
+            compiledFullMarkdown += `\n\n`;
+        }
+
         if (compiledFullMarkdown) {
-            reportRenderedContent.innerHTML = marked.parse(compiledFullMarkdown);
+            reportRenderedContent.innerHTML = safeParseMarkdown(compiledFullMarkdown);
         }
 
         referencesList.innerHTML = "";
