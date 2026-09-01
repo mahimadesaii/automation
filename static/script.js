@@ -701,7 +701,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         <span class="batch-step-name">Section ${bId}: ${escapeHtml(bName)}</span>
                         <span class="batch-step-status" id="batch-step-status-lbl-${bId}">Queued</span>
                     `;
-                    batchStepsList.appendChild(stepItem);
+                    if (batchStepsList) batchStepsList.appendChild(stepItem);
 
 
                 });
@@ -769,7 +769,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     <td>${cTok}</td>
                     <td><strong>${tokens}</strong></td>
                 `;
-                metricsTableBody.appendChild(tr);
+                if (metricsTableBody) metricsTableBody.appendChild(tr);
 
                 extractAndMapReferences(content);
                 resultsPanel.classList.remove("hidden");
@@ -903,7 +903,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 <span class="reference-name">${idx}. ${escapeHtml(name)}</span>
                 <a href="${escapeHtml(url)}" target="_blank" class="reference-url">${escapeHtml(url)}</a>
             `;
-            referencesList.appendChild(card);
+            if (referencesList) referencesList.appendChild(card);
             idx++;
         });
 
