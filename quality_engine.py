@@ -269,71 +269,6 @@ def evaluate_report_quality_metrics(report_text: str, topic: str = "", search_co
     }
 
 
-def enrich_report_presentation(content: str, topic: str = "") -> str:
-    """
-    Enhances report formatting to match ChatGPT / Claude Deep Research standards:
-    - Inserts GitHub Alert callout boxes (> [!NOTE], > [!IMPORTANT], > [!TIP])
-    - Highlights key numerical metrics in inline code badges
-    """
-    if not content:
-        return content
-
-    lines = content.splitlines()
-    enriched_lines = []
-
-    for line in lines:
-        stripped = line.strip()
-        if re.match(r'^(?:###?\s*)?(?:Executive Summary|Executive Verdict|Key Findings|Overview)[:\s]*$', stripped, re.IGNORECASE):
-            enriched_lines.append("\n> [!IMPORTANT]")
-            enriched_lines.append(f"> **{stripped.replace('#', '').strip()}**")
-            continue
-
-        if re.match(r'^(?:###?\s*)?(?:Conclusion|Strategic Takeaways|Final Verdict|Bottom Line)[:\s]*$', stripped, re.IGNORECASE):
-            enriched_lines.append("\n> [!TIP]")
-            enriched_lines.append(f"> **{stripped.replace('#', '').strip()}**")
-            continue
-
-        if not stripped.startswith('|') and not stripped.startswith('http') and not stripped.startswith('>'):
-            line = re.sub(r'\b(\d+\.\d+)\s*(?:/5|out of 5)\b', r'`\1 / 5 ⭐`', line)
-            line = re.sub(r'\b(\d+(?:\.\d+)?%)\b', r'`\1`', line)
-
-        enriched_lines.append(line)
-
-    result = "\n".join(enriched_lines)
-    result = re.sub(r'(\n> \[\!(?:IMPORTANT|TIP|NOTE)\]\n(?:> [^\n]+\n)+)\n> \[\!(?:IMPORTANT|TIP|NOTE)\]', r'\1', result)
-    return result
-
-
-def is_historical_factual_topic(topic: str) -> bool:
-    """Detects historical, scientific, origin, or factual topics requiring strict grounding."""
-    t_lower = topic.lower()
-    patterns = [r'\bcivilization\b', r'\bhistory\b', r'\bempire\b', r'\bdynasty\b', r'\bancient\b']
-    return any(re.search(p, t_lower) for p in patterns)
-
-
-def verify_fact_grounding_claims(content: str, search_context: str) -> tuple:
-    """
-    Mandatory Fact-Grounding Verification:
-    Extracts dates (years, BC/AD) and proper names from LLM output.
-    Cross-checks each against search_context. Returns (is_valid, unsupported_claims_list).
-    """
-    if not content or not search_context or len(search_context) < 100:
-        return True, []
-
-    ctx_lower = search_context.lower()
-    unsupported = []
-
-    date_matches = re.findall(r'\b\d{3,4}\s*(?:BC|BCE|AD|CE)?\b|\b\d{1,4}\s+(?:BC|BCE|AD|CE)\b', content, re.IGNORECASE)
-    for d in set(date_matches):
-        clean_d = d.strip()
-        num_m = re.search(r'\d+', clean_d)
-        if num_m and len(num_m.group(0)) >= 3 and num_m.group(0) not in ctx_lower:
-            unsupported.append(f"Unverified Date: {clean_d}")
-
-    is_valid = len(unsupported) == 0
-    return is_valid, unsupported
-
-
 def detect_source_contradictions(search_context: str) -> list:
     """
     Detects potential conflicting factual claims across retrieved web sources.
@@ -342,9 +277,49 @@ def detect_source_contradictions(search_context: str) -> list:
         return []
 
     contradictions = []
+    # Check for contrasting date or numeric stat claims across source blocks
     numbers = re.findall(r' \d{4} | \d+(?:\.\d+)?% ', search_context)
     unique_nums = set(numbers)
     if len(unique_nums) >= 4 and len(numbers) > len(unique_nums) * 1.5:
         contradictions.append("Varied numerical metrics detected across sources; synthesis highlights reconciled ranges.")
 
     return contradictions
+
+
+def enrich_report_presentation(content: str, topic: str = "") -> str:
+    if not content:
+        return content
+    lines = content.splitlines()
+    enriched_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r'^(?:###?\s*)?(?:Executive Summary|Executive Verdict|Key Findings|Overview)[:\s]*$', stripped, re.IGNORECASE):
+            enriched_lines.append("\n> [!IMPORTANT]")
+            enriched_lines.append(f"> **{stripped.replace('#', '').strip()}**")
+            continue
+        if re.match(r'^(?:###?\s*)?(?:Conclusion|Strategic Takeaways|Final Verdict|Bottom Line)[:\s]*$', stripped, re.IGNORECASE):
+            enriched_lines.append("\n> [!TIP]")
+            enriched_lines.append(f"> **{stripped.replace('#', '').strip()}**")
+            continue
+        enriched_lines.append(line)
+    return "\n".join(enriched_lines)
+
+
+def is_historical_factual_topic(topic: str) -> bool:
+    t_lower = (topic or "").lower()
+    patterns = [r'\bcivilization\b', r'\bhistory\b', r'\bempire\b', r'\bdynasty\b', r'\bancient\b', r'\borigin\b', r'\bcreation of\b']
+    return any(re.search(p, t_lower) for p in patterns)
+
+
+def verify_fact_grounding_claims(content: str, search_context: str) -> tuple:
+    if not content or not search_context or len(search_context) < 100:
+        return True, []
+    ctx_lower = search_context.lower()
+    unsupported = []
+    date_matches = re.findall(r'\b\d{3,4}\s*(?:BC|BCE|AD|CE)?\b|\b\d{1,4}\s+(?:BC|BCE|AD|CE)\b', content, re.IGNORECASE)
+    for d in set(date_matches):
+        clean_d = d.strip()
+        num_m = re.search(r'\d+', clean_d)
+        if num_m and len(num_m.group(0)) >= 3 and num_m.group(0) not in ctx_lower:
+            unsupported.append(f"Unverified Date: {clean_d}")
+    return len(unsupported) == 0, unsupported

@@ -796,6 +796,9 @@ document.addEventListener("DOMContentLoaded", () => {
             case "done":
                 const elapsedSecs = ((Date.now() - startTimeAll) / 1000).toFixed(1);
                 const finalTime = data.total_time || elapsedSecs;
+                if (data.quality_eval) {
+                    window.latestQualityEval = data.quality_eval;
+                }
                 addConsoleLog(`Synthesis complete in ${finalTime}s! Consumed ${currentRunTotalTokens} tokens.`, "success");
                 
                 if (typeof metricTotalTime !== "undefined" && metricTotalTime) metricTotalTime.textContent = finalTime;
@@ -898,19 +901,29 @@ document.addEventListener("DOMContentLoaded", () => {
             compiledFullMarkdown += `\n\n`;
         }
 
-        compiledFullMarkdown += `## Empirical Research Quality Scorecard\n\n`;
-        compiledFullMarkdown += `| Metric | Score | Evaluation |\n`;
-        compiledFullMarkdown += `| :--- | :---: | :--- |\n`;
-        compiledFullMarkdown += `| **Factual Accuracy** | \`9.2 / 10\` | 🟢 Verified Source Grounding |\n`;
-        compiledFullMarkdown += `| **Evidence Quality** | \`9.0 / 10\` | 🟢 Multi-Source Web Findings |\n`;
-        compiledFullMarkdown += `| **Research Depth** | \`9.5 / 10\` | 🟢 Multi-Paragraph Analysis |\n`;
-        compiledFullMarkdown += `| **Relevance** | \`9.8 / 10\` | 🟢 High Intent Alignment |\n`;
-        compiledFullMarkdown += `| **Completeness** | \`9.1 / 10\` | 🟢 Exhaustive Section Coverage |\n`;
-        compiledFullMarkdown += `| **Analytical Quality** | \`8.8 / 10\` | 🟢 Strategic Synthesis |\n`;
-        compiledFullMarkdown += `| **Citation Correctness** | \`9.2 / 10\` | 🟢 Validated Citations |\n`;
-        compiledFullMarkdown += `| **Content Originality & Synthesis** | \`9.0 / 10\` | 🟢 Non-Repetitive Prose |\n`;
-        compiledFullMarkdown += `| **Structure** | \`9.2 / 10\` | 🟢 Cohesive Markdown Layout |\n\n`;
-        compiledFullMarkdown += `**Overall Research Quality Score: \`9.2 / 10\` (Verified Production Grade)**\n\n`;
+        if (window.latestQualityEval) {
+            const q = window.latestQualityEval;
+            compiledFullMarkdown += `## Empirical Research Quality Scorecard\n\n`;
+            if (q.critical_failure) {
+                compiledFullMarkdown += `> [!WARNING]\n`;
+                compiledFullMarkdown += `> **Quality Penalizer Alert**: Critical flaws detected during generation:\n`;
+                (q.failure_reasons || []).forEach(r => {
+                    compiledFullMarkdown += `> - ${r}\n`;
+                });
+                compiledFullMarkdown += `\n`;
+            }
+            compiledFullMarkdown += `| Metric | Score | Evaluation |\n`;
+            compiledFullMarkdown += `| :--- | :---: | :--- |\n`;
+            const m = q.metrics || {};
+            for (const [key, score] of Object.entries(m)) {
+                const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                const badge = score >= 7.0 ? '🟢 Verified' : (score >= 5.0 ? '🟡 Moderate' : '🔴 Flawed');
+                compiledFullMarkdown += `| **${label}** | \`${score} / 10\` | ${badge} |\n`;
+            }
+            compiledFullMarkdown += `\n`;
+            const gradeStatus = q.is_production_grade ? "Verified Production Grade" : "Failed Production Quality Standards";
+            compiledFullMarkdown += `**Overall Research Quality Score: \`${q.overall_score} / 10\` (${gradeStatus})**\n\n`;
+        }
 
         if (compiledFullMarkdown) {
             reportRenderedContent.innerHTML = safeParseMarkdown(compiledFullMarkdown);

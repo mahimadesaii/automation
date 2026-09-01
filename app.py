@@ -95,6 +95,13 @@ def verify_and_cleanse_output(content: str, topic: str = "") -> str:
     if not content:
         return content
 
+    # Strip conversational preambles
+    content = re.sub(r'^(?:Certainly!|Sure!|Here is|Sure, here|Certainly, here)[^\n]*\n+', '', content.strip(), flags=re.IGNORECASE)
+    # Strip malformed markdown images and email protection artifacts
+    content = re.sub(r'\[!\[\]\([^\)]+\)\]\([^\)]+\)', '', content)
+    content = re.sub(r'!\[.*?\]\([^\)]+\)', '', content)
+    content = re.sub(r'\[email\s*protected\]', 'contact', content)
+
     # Strip <think>...</think> and raw LLM chain-of-thought preambles
     content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
     lines_raw = content.splitlines()
@@ -360,14 +367,28 @@ Output ONLY valid JSON array in this exact format:
             if isinstance(parsed, list) and len(parsed) >= 1:
                 plan = []
                 for idx, item in enumerate(parsed[:target_count], 1):
-                    raw_name = str(item.get("name", "")).strip()
+                    raw_n = item.get("name", "")
+                    if isinstance(raw_n, dict):
+                        raw_n = raw_n.get("en") or (list(raw_n.values())[0] if raw_n else "")
+                    raw_name = str(raw_n).strip()
+                    if raw_name.startswith('{') and "'en'" in raw_name:
+                        m_dict = re.search(r"'(?:en|title|name)':\s*'([^']+)'", raw_name)
+                        if m_dict:
+                            raw_name = m_dict.group(1)
                     clean_name = re.sub(r'^(?:Section\s+\d+[:\-]?\s*)+', '', raw_name, flags=re.IGNORECASE).strip()
                     clean_name = re.sub(r'^(?:Part\s+\d+[:\-]?\s*)+', '', clean_name, flags=re.IGNORECASE).strip()
+                    clean_name = clean_name.rstrip(':').strip()
+
+                    raw_d = item.get("desc", f"Detailed analysis of {clean_topic}")
+                    if isinstance(raw_d, dict):
+                        raw_d = raw_d.get("en") or (list(raw_d.values())[0] if raw_d else "")
+                    clean_desc = str(raw_d).strip()
+
                     if clean_name and len(clean_name) > 3:
                         plan.append({
                             "id": idx,
                             "name": clean_name,
-                            "desc": str(item.get("desc", f"Detailed analysis of {clean_topic}"))
+                            "desc": clean_desc
                         })
                 if len(plan) >= 1:
                     return plan
@@ -904,7 +925,7 @@ def stream_research():
                 # If model is small or using fallback node, check if microtask prompt should be used
                 prompt_to_use = user_prompt
                 if is_small_model(preferred_model) or not access_token.startswith("gsk_"):
-                    prompt_to_use = build_microtask_prompt(topic, batch_name, batch_desc, archetype, search_context)
+                    prompt_to_use = build_microtask_prompt(topic, batch_name, batch_desc, archetype, sec_context)
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(
@@ -926,7 +947,7 @@ def stream_research():
                 if q_score < 0.65 or (is_small_model(preferred_model) and q_score < 0.80):
                     # Fallback to high-quality deterministic structured synthesis
                     s_content, s_p, s_c, s_node = build_structured_section(
-                        topic, batch_name, batch_desc, archetype, search_context, accumulated_findings
+                        topic, batch_name, batch_desc, archetype, sec_context, accumulated_findings
                     )
                     verified_content = s_content
                     p_tok, c_tok = s_p, s_c
@@ -976,7 +997,10 @@ def stream_research():
         total_time = time.time() - start_time_all
         final_metrics = capacity_tracker.get_capacity_metrics()
 
-        yield f"data: {json.dumps({'type': 'done', 'total_tokens': total_tokens, 'total_prompt_tokens': total_p_tokens, 'total_completion_tokens': total_c_tokens, 'total_time': f'{total_time:.1f}', 'final_capacity_pct': final_metrics['capacity_utilized_pct']})}\n\n"
+        full_report_text = "\n\n".join(previous_full_contents)
+        quality_eval = evaluate_report_quality_metrics(full_report_text, topic=topic)
+
+        yield f"data: {json.dumps({'type': 'done', 'total_tokens': total_tokens, 'total_prompt_tokens': total_p_tokens, 'total_completion_tokens': total_c_tokens, 'total_time': f'{total_time:.1f}', 'final_capacity_pct': final_metrics['capacity_utilized_pct'], 'quality_eval': quality_eval})}\n\n"
 
     res = Response(stream_with_context(event_stream()), mimetype="text/event-stream")
     res.headers["X-Accel-Buffering"] = "no"
