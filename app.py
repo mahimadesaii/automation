@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, Response, jsonify, stream_with_context
+from flask import Flask, render_template, request, Response, jsonify, stream_with_context, send_from_directory
 import time
 import json
 import requests
@@ -37,7 +37,12 @@ except Exception:
 # Load environment variables from .env if present
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static", static_url_path="/static")
+
+
+@app.route("/static/<path:filename>")
+def serve_static(filename):
+    return send_from_directory("static", filename)
 
 # Capacity Tracker for Rate Limiting & Cooldown Management
 class SystemCapacityTracker:
