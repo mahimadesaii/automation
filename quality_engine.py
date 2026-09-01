@@ -323,3 +323,21 @@ def verify_fact_grounding_claims(content: str, search_context: str) -> tuple:
         if num_m and len(num_m.group(0)) >= 3 and num_m.group(0) not in ctx_lower:
             unsupported.append(f"Unverified Date: {clean_d}")
     return len(unsupported) == 0, unsupported
+
+
+def clean_listicle_output(content: str) -> str:
+    """
+    Cleans raw HTML table artifacts (e.g. <col class='rowspan'>, <tr style='' bgcolor='#f7ebea'>) 
+    that tiny or raw LLM outputs produce, converting them into clean Markdown table structures.
+    """
+    if not content:
+        return content
+
+    # 1. Strip raw HTML table structures and broken tags
+    cleaned = re.sub(r'</?(?:table|thead|tbody|tr|td|th|col|span|div)[^>]*>', '', content, flags=re.IGNORECASE)
+    
+    # 2. Fix broken empty markdown table rows and repeated horizontal rules
+    cleaned = re.sub(r'\n\s*---\s*\n\s*---\s*\n', '\n---\n', cleaned)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    
+    return cleaned
