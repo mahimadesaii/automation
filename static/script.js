@@ -141,11 +141,53 @@ document.addEventListener("DOMContentLoaded", () => {
         if (storedKey) {
             accessTokenInput.value = storedKey;
             updateKeyStatusDisplay();
+        probeEngineCapabilities();
         } else {
             updateKeyStatusDisplay();
+        probeEngineCapabilities();
         }
 
         checkSystemCapacity();
+    }
+
+    
+    async function probeEngineCapabilities() {
+        const groqCapEl = document.querySelector("#cap-groq .cap-status");
+        const ollamaCapEl = document.querySelector("#cap-ollama .cap-status");
+        const token = getActiveAccessToken();
+
+        try {
+            const res = await fetch("/api/capabilities", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ access_token: token })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (groqCapEl) {
+                    if (data.groq_available || (token && token.startsWith("gsk_"))) {
+                        groqCapEl.innerHTML = '<span style="color:#16a34a; font-weight:600;">⚡ Active (llama-3.3-70b)</span>';
+                    } else {
+                        groqCapEl.innerHTML = '<span style="color:#888;">Grounded Cloud Engine</span>';
+                    }
+                }
+                if (ollamaCapEl) {
+                    if (data.ollama_available) {
+                        ollamaCapEl.innerHTML = '<span style="color:#16a34a; font-weight:600;">💻 Active (Local Node)</span>';
+                    } else {
+                        ollamaCapEl.innerHTML = '<span style="color:#888;">Standby / Cloud Fallback</span>';
+                    }
+                }
+            }
+        } catch (e) {
+            if (groqCapEl) {
+                if (token && token.startsWith("gsk_")) {
+                    groqCapEl.innerHTML = '<span style="color:#16a34a; font-weight:600;">⚡ Active (llama-3.3-70b)</span>';
+                } else {
+                    groqCapEl.innerHTML = '<span style="color:#888;">Grounded Cloud Engine</span>';
+                }
+            }
+        }
     }
 
     function updateKeyStatusDisplay() {
@@ -185,6 +227,7 @@ document.addEventListener("DOMContentLoaded", () => {
         enableGroqToggle.addEventListener("change", () => {
             localStorage.setItem(LS_ENABLED, enableGroqToggle.checked ? "true" : "false");
             updateKeyStatusDisplay();
+        probeEngineCapabilities();
         });
     }
 
@@ -198,10 +241,12 @@ document.addEventListener("DOMContentLoaded", () => {
                     localStorage.setItem(LS_ENABLED, "true");
                 }
                 updateKeyStatusDisplay();
+        probeEngineCapabilities();
                 addConsoleLog("Updated Groq API Key.", "success");
             } else {
                 localStorage.removeItem(LS_KEY);
                 updateKeyStatusDisplay();
+        probeEngineCapabilities();
             }
         });
     }
@@ -215,6 +260,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 localStorage.setItem(LS_ENABLED, "false");
             }
             updateKeyStatusDisplay();
+        probeEngineCapabilities();
             addConsoleLog("Disabled & cleared Groq API Key. Engine set to Local Ollama.", "warning");
         });
     }
