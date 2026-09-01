@@ -1,7 +1,9 @@
 document.addEventListener("DOMContentLoaded", () => {
     // System State Variables
     let activeBatchCount = 0;
+    let startTimeAll = 0;
     let completedBatches = 0;
+        startTimeAll = Date.now();
     let batchContents = {};
     let batchMetadataMap = {};
     let referencesMap = new Map();
@@ -452,6 +454,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function startResearch(params) {
         completedBatches = 0;
+        startTimeAll = Date.now();
         batchContents = {};
         batchMetadataMap = {};
         referencesMap.clear();
@@ -595,6 +598,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     prevSummaries.push({ name: sec.name, summary: secData.summary || "" });
 
                     // Reuse the same result handler as SSE
+                    if (secData.search_context) {
+                        extractAndMapReferences(secData.search_context);
+                    }
                     handleSSEEvent({
                         type: "result",
                         batch_id: secData.section_id,
@@ -788,12 +794,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 break;
 
             case "done":
-                addConsoleLog(`Synthesis complete in ${data.total_time}s! Consumed ${currentRunTotalTokens} tokens.`, "success");
+                const elapsedSecs = ((Date.now() - startTimeAll) / 1000).toFixed(1);
+                const finalTime = data.total_time || elapsedSecs;
+                addConsoleLog(`Synthesis complete in ${finalTime}s! Consumed ${currentRunTotalTokens} tokens.`, "success");
                 
-                metricTotalTime.textContent = data.total_time;
-                metricTotalTokens.textContent = currentRunTotalTokens;
-                metricPromptTokens.textContent = currentRunPromptTokens;
-                metricCompletionTokens.textContent = currentRunCompletionTokens;
+                if (typeof metricTotalTime !== "undefined" && metricTotalTime) metricTotalTime.textContent = finalTime;
+                if (typeof metricTotalTokens !== "undefined" && metricTotalTokens) metricTotalTokens.textContent = currentRunTotalTokens;
+                if (typeof metricPromptTokens !== "undefined" && metricPromptTokens) metricPromptTokens.textContent = currentRunPromptTokens;
+                if (typeof metricCompletionTokens !== "undefined" && metricCompletionTokens) metricCompletionTokens.textContent = currentRunCompletionTokens;
 
                 updateCapacityGauge(data.final_capacity_pct || 0);
                 setUIState("done", "Completed");
