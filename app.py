@@ -620,51 +620,53 @@ def research_section():
 
     if archetype == "CONCEPT_EXPLANATION":
         system_prompt = (
-            "You are an expert science communicator and educator. "
-            "Your task is to write a clear, beginner-friendly explanation using plain language and intuitive real-world analogies (e.g. spinning coins, light switches vs dimmers). "
-            "NEVER use generic corporate business jargon like 'Core Framework & Historical Antecedents', 'Domain Architecture', or 'Operational Metrics'. "
-            "Synthesize information from the sources into smooth, flowing paragraphs as an expert writer would. "
-            "Do NOT list or summarize sources individually."
+            "You are an expert technical educator. Synthesize an in-depth, accessible explanation strictly grounded in the retrieved sources and domain principles. "
+            "Write smooth, comprehensive explanatory prose using clear headings, bullet points, and markdown tables. "
+            "Do NOT output raw prompt templates, draft outlines, or internal thoughts."
         )
         section_instructions = (
-            f"This is Section {section_id}: '{section_name}' ({section_desc}) for concept '{topic}'.\n"
-            "INSTRUCTIONS FOR CONCEPT EXPLANATION:\n"
-            "1. Explain the concepts clearly using simple language and intuitive real-world analogies.\n"
-            "2. Do NOT list source titles or snippets individually. Synthesize facts into clear flowing paragraphs.\n"
-            "3. Focus on making complex ideas easy to grasp for a general audience."
+            f"This is Section {section_id}: '{section_name}' ({section_desc}) for topic '{topic}'.\n"
+            "INSTRUCTIONS:\n"
+            "1. Provide a comprehensive, structured breakdown of the concepts.\n"
+            "2. Synthesize facts directly from retrieved sources into clean narrative prose.\n"
+            "3. Include clear markdown tables and structured bullet points."
         )
 
     elif archetype == "LISTICLE_RANKING":
         system_prompt = (
-            "You are an elite, fact-grounded Research Analyst specializing in rankings and market breakdowns. "
-            "Synthesize factual information strictly based on retrieved sources."
+            "You are an elite, fact-grounded Research Analyst. Write an evidence-backed ranking and entity profile analysis strictly based on retrieved search context. "
+            "Do NOT output raw prompt templates, draft outlines, or internal thoughts."
         )
         section_instructions = (
-            f"This is Section {section_id}: '{section_name}' ({section_desc}) for listicle '{topic}'.\n"
-            "INSTRUCTIONS FOR RANKINGS:\n"
-            "1. Name ACTUAL real companies/entities found in the retrieved sources (e.g. TCS, Infosys, Wipro, Google India, Accenture, etc.).\n"
-            "2. For each named entity, detail: Real Company Name, Sector, Rating/Metric, Headcount, and Workplace Culture.\n"
-            "3. Include comparison markdown tables."
+            f"This is Section {section_id}: '{section_name}' ({section_desc}) for topic '{topic}'.\n"
+            "INSTRUCTIONS:\n"
+            "1. Identify and analyze the top entities/companies retrieved in the live web search context for '{topic}'.\n"
+            "2. For each entity, detail its key profile features, operational metrics, and workplace/market dynamics.\n"
+            "3. Include comprehensive side-by-side markdown comparison tables."
         )
 
     elif archetype == "COMPARISON":
         system_prompt = (
-            "You are a Senior Systems Architect and Technical Writer. Provide a side-by-side comparative analysis strictly grounded in the retrieved sources."
+            "You are a Senior Technical Architect. Provide a thorough, side-by-side comparative analysis strictly grounded in the retrieved sources. "
+            "Do NOT output raw prompt templates, draft outlines, or internal thoughts."
         )
         section_instructions = (
             f"This is Section {section_id}: '{section_name}' ({section_desc}) for comparison '{topic}'.\n"
-            "INSTRUCTIONS FOR COMPARISON:\n"
-            "1. Provide side-by-side comparative analysis of features, performance, architecture, and ecosystem.\n"
-            "2. Include markdown feature matrix tables."
+            "INSTRUCTIONS:\n"
+            "1. Provide side-by-side comparative evaluation of technical architecture, performance metrics, and operational trade-offs.\n"
+            "2. Include structured markdown comparison matrix tables."
         )
 
     else:
         system_prompt = (
-            "You are an elite, fact-grounded Senior Research Analyst. Write an evidence-backed, highly readable research report section."
+            "You are an elite Senior Research Analyst. Write an evidence-backed, highly readable research report section. "
+            "Do NOT output raw prompt templates, draft outlines, or internal thoughts."
         )
         section_instructions = (
             f"This is Section {section_id}: '{section_name}' ({section_desc}) for topic '{topic}'.\n"
-            "Provide specific, factual synthesis grounded in the retrieved sources into smooth, flowing paragraphs."
+            "INSTRUCTIONS:\n"
+            "1. Provide specific, factual synthesis grounded in the retrieved sources into smooth, flowing paragraphs.\n"
+            "2. Include structured headings, bullet points, and markdown comparison tables."
         )
 
     user_prompt = f"""LIVE RETRIEVED SOURCES FOR TOPIC "{topic}":
@@ -680,7 +682,8 @@ SECTION REQUEST:
 FORMATTING RULES:
 - Use clear GFM markdown with section headers, bullet points, and markdown tables.
 - Cite sources inline using [Source Title](URL).
-- Do not repeat introductory fluff or generic sentences. Start directly with the factual findings.
+- DO NOT output internal thinking logs, self-corrections, or meta-commentary (e.g. 'Let\'s draft', 'Self-Correction', 'I need to make sure').
+- Output ONLY the final polished Markdown research section directly.
 """
 
     t0 = time.time()

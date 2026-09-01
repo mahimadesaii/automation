@@ -40,8 +40,18 @@ def execute_groq_request(prompt: str, system_prompt: str, access_token: str, mod
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    target_models = [model, "llama-3.3-70b-versatile", "llama3-70b-8192", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"]
+    valid_active_models = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant"
+    ]
+    target_models = []
+    if model and not any(legacy in model.lower() for legacy in ["mixtral", "gemma", "llama3-70b", "llama3-8b", "llama-3", "whisper", "qwen", "openai", "compound"]):
+        target_models.append(model)
+    for m in valid_active_models:
+        if m not in target_models:
+            target_models.append(m)
     
+    last_err = ""
     for m in target_models:
         payload = {
             "model": m,
@@ -59,12 +69,16 @@ def execute_groq_request(prompt: str, system_prompt: str, access_token: str, mod
                 return content, p_tok, c_tok, f"Groq Cloud ({m})"
             elif res.status_code in (401, 403):
                 raise Exception("Authentication Error (401/403): Invalid or expired Groq API Key.")
+            else:
+                last_err = f"Groq API HTTP {res.status_code}: {res.text[:120]}"
+                print(f"[Groq Engine] Model {m} status {res.status_code}: {res.text[:120]}")
         except Exception as e:
             if "Authentication Error" in str(e):
                 raise e
+            last_err = str(e)
             continue
             
-    raise Exception("Groq Cloud API failure across models.")
+    raise Exception(f"Groq Cloud API Error: {last_err or 'Failed across models'}")
 
 
 def execute_openrouter_request(prompt: str, system_prompt: str, api_key: str = "", temperature: float = 0.2, timeout: int = 25):
@@ -252,40 +266,32 @@ def generate_completion(
     temperature: float = 0.2
 ):
     """
-    Tiered LLM Inference Executor:
-    1. User-provided Groq Key (if provided starting with gsk_)
-    2. Server-configured GROQ_API_KEY
-    3. OpenRouter API Key (if configured)
-    4. Local Ollama Node (auto-probes local models)
-    5. Grounded Web Fact Synthesizer (zero-failure fallback)
+    Strict LLM Inference Executor:
+    1. User-provided Groq Key (Exclusive - No fallback to Ollama/Synthesizer)
+    2. Server-configured GROQ_API_KEY (Exclusive - No fallback to Ollama/Synthesizer)
+    3. OpenRouter API Key (When Groq absent)
+    4. Local Ollama Node (When Groq absent)
+    5. Grounded Web Fact Synthesizer (Zero-failure fallback when Groq absent)
     """
     token_to_use = (access_token or "").strip()
     server_groq_key = os.environ.get("GROQ_API_KEY", "").strip()
-    server_openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
 
-    # Tier 1: User-provided Groq Key
-    if token_to_use and token_to_use.startswith("gsk_"):
-        try:
-            return execute_groq_request(prompt, system_prompt, token_to_use, model=preferred_model, temperature=temperature)
-        except Exception as e:
-            if "Authentication Error" in str(e):
-                raise e
+    # Tier 1: User-provided Groq Key (EXCLUSIVE - Groq Only)
+    if token_to_use and (token_to_use.startswith("gsk_") or token_to_use.startswith("sk-")):
+        return execute_groq_request(prompt, system_prompt, token_to_use, model=preferred_model, temperature=temperature)
 
-    # Tier 2: Server-configured Groq Key
+    # Tier 2: Server-configured Groq Key (EXCLUSIVE - Groq Only)
     if server_groq_key and server_groq_key.startswith("gsk_"):
-        try:
-            return execute_groq_request(prompt, system_prompt, server_groq_key, model=preferred_model, temperature=temperature)
-        except Exception as e:
-            print(f"[LLM Engine] Server Groq Key failed: {e}")
+        return execute_groq_request(prompt, system_prompt, server_groq_key, model=preferred_model, temperature=temperature)
 
-    # Tier 3: OpenRouter API
+    # ── NO GROQ KEY PRESENT: Fall back to secondary engines ──
+    server_openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if server_openrouter_key:
         try:
             return execute_openrouter_request(prompt, system_prompt, api_key=server_openrouter_key, temperature=temperature)
         except Exception as e:
             print(f"[LLM Engine] OpenRouter failed: {e}")
 
-    # Tier 4: Local Ollama Node (Skipped on Vercel / when disabled)
     disable_ollama = os.environ.get("DISABLE_LOCAL_OLLAMA", "").strip().lower() == "true" or bool(os.environ.get("VERCEL"))
     if not disable_ollama:
         try:
@@ -293,6 +299,5 @@ def generate_completion(
         except Exception as e:
             print(f"[LLM Engine] Local Ollama failed: {e}")
 
-    # Tier 5: Zero-Failure Grounded Web Fact Synthesizer
     print("[LLM Engine] Using Grounded Web Fact Synthesizer")
     return synthesize_grounded_web_facts(prompt)

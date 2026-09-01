@@ -341,3 +341,41 @@ def clean_listicle_output(content: str) -> str:
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     
     return cleaned
+
+
+def verify_and_cleanse_output(content: str, topic: str = "") -> str:
+    """
+    Strips internal AI reasoning chains (<think>...</think>, Self-Correction/Refinement, Let's draft),
+    template placeholders ([Company Name], [Bullet 1], [Table comparing...]), metadata leaks, and formats clean Markdown output.
+    """
+    if not content:
+        return content
+
+    # 1. Strip raw thinking blocks & tags
+    cleaned = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 2. Strip bracketed template placeholders like [Table comparing...], [Bullet points...], [Company Name], | ... | ... |
+    cleaned = re.sub(r'\[(?:Table|Bullet|Brief|Company|Insight|Metric|Data|Value|fill)[^\]]*\]', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\|\s*\.\.\.\s*\|\s*\.\.\.\s*(?:\|\s*\.\.\.\s*)?\|', '', cleaned)
+
+    # 3. Strip mental refinement / draft / constraint check blocks & thought logs
+    cleaned = re.sub(r'Draft\s*-\s*[^\n]+\n?', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'(?:Mental Refinement|Self-Correction/Refinement)[^\n]*\n?', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'^(?:Wait,\s+the\s+prompt|I\'ll\s+focus|I\s+need\s+to|Let\'s\s+draft|Checking\s+constraints|I\s+will\s+craft|I\'ll\s+weave|I\'ll\s+structure|I\'ll\s+verify|No\s+preamble|Start\s+with|Use\s+###|Use\s+bullet|Use\s+markdown|Cite\s+inline|Every\s+sentence|Synthesize\s+context|Let\'s\s+write|Note:|Fill\s+with).*?\n', '', cleaned, flags=re.MULTILINE | re.IGNORECASE)
+    
+    # 4. Strip pre-content meta commentary lines before the first markdown table or header
+    lines = cleaned.splitlines()
+    first_good_idx = 0
+    for idx, l in enumerate(lines):
+        l_str = l.strip()
+        if l_str.startswith('|') or l_str.startswith('#') or l_str.startswith('**') or (len(l_str) > 40 and not l_str.startswith('[')):
+            first_good_idx = idx
+            break
+    
+    cleaned = "\n".join(lines[first_good_idx:])
+
+    # 5. Clean HTML table artifacts
+    cleaned = clean_listicle_output(cleaned)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+
+    return cleaned.strip()
