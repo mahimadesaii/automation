@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 # Import custom modules
 from search_retrieval import execute_live_research
 from llm_engine import generate_completion, DEFAULT_OLLAMA_HOST
+from providers.orchestrator import ProviderOrchestrator
 from dedup import check_section_duplication
 from quality_engine import (
     enrich_report_presentation,
@@ -19,7 +20,8 @@ from quality_engine import (
     build_microtask_prompt,
     build_structured_section,
     is_historical_factual_topic,
-    verify_fact_grounding_claims
+    verify_fact_grounding_claims,
+    evaluate_report_quality_metrics
 )
 
 # Safe & Robust import for PDF Reader (pypdf)
@@ -405,6 +407,22 @@ Output ONLY valid JSON array in this exact format:
             {"id": 2, "name": "Core Data Analysis & Operational Metrics", "desc": f"Empirical statistics and data breakdown for {clean_topic}."},
             {"id": 3, "name": "Strategic Implications & Industry Outlook", "desc": f"Future trajectory and strategic conclusions for {clean_topic}."}
         ][:target_count]
+
+
+
+
+@app.route("/api/capabilities", methods=["GET", "POST"])
+def get_capabilities():
+    access_token = ""
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        access_token = data.get("access_token", "").strip()
+    else:
+        access_token = request.args.get("access_token", "").strip()
+
+    orchestrator = ProviderOrchestrator(groq_key=access_token)
+    info = orchestrator.detect_capabilities()
+    return jsonify(info)
 
 
 @app.route("/api/capacity", methods=["GET"])
