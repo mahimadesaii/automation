@@ -42,16 +42,20 @@ def execute_groq_request(prompt: str, system_prompt: str, access_token: str, mod
 
     valid_active_models = [
         "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant"
+        "llama-3.1-8b-instant",
+        "qwen/qwen3.8-27b",
+        "qwen/qwen3.6-27b",
+        "openai/gpt-oss-120b",
+        "groq/compound"
     ]
     target_models = []
-    if model and not any(legacy in model.lower() for legacy in ["mixtral", "gemma", "llama3-70b", "llama3-8b", "llama-3", "whisper", "qwen", "openai", "compound"]):
+    if model and not any(legacy in model.lower() for legacy in ["mixtral", "gemma", "llama3-70b", "llama3-8b", "whisper"]):
         target_models.append(model)
     for m in valid_active_models:
         if m not in target_models:
             target_models.append(m)
     
-    last_err = ""
+    errors = []
     for m in target_models:
         payload = {
             "model": m,
@@ -70,15 +74,16 @@ def execute_groq_request(prompt: str, system_prompt: str, access_token: str, mod
             elif res.status_code in (401, 403):
                 raise Exception("Authentication Error (401/403): Invalid or expired Groq API Key.")
             else:
-                last_err = f"Groq API HTTP {res.status_code}: {res.text[:120]}"
-                print(f"[Groq Engine] Model {m} status {res.status_code}: {res.text[:120]}")
+                err_msg = f"HTTP {res.status_code} on {m}: {res.text[:120]}"
+                errors.append(err_msg)
+                print(f"[Groq Engine] {err_msg}")
         except Exception as e:
             if "Authentication Error" in str(e):
                 raise e
-            last_err = str(e)
+            errors.append(f"{m} error: {str(e)}")
             continue
             
-    raise Exception(f"Groq Cloud API Error: {last_err or 'Failed across models'}")
+    raise Exception(f"Groq Cloud API Error: {' | '.join(errors) or 'Failed across models'}")
 
 
 def execute_openrouter_request(prompt: str, system_prompt: str, api_key: str = "", temperature: float = 0.2, timeout: int = 25):
