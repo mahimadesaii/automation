@@ -461,7 +461,10 @@ def research_plan():
         sections = generate_dynamic_section_plan(topic, target_count, archetype, access_token, preferred_model, ollama_host, enable_params)
     except Exception as e:
         print(f"[Plan Error] Exception in section planning: {e}")
-        sections = fallback_sections(topic, target_count, archetype)
+        sections = [
+            {"id": 1, "name": f"Overview & Foundational Breakdown", "desc": f"Verified context for {topic}."},
+            {"id": 2, "name": f"Core Analysis & Strategic Synthesis", "desc": f"Detailed analytical breakdown of {topic}."}
+        ][:target_count]
 
     return jsonify({
         "archetype": archetype,

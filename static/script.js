@@ -459,11 +459,11 @@ document.addEventListener("DOMContentLoaded", () => {
         currentRunPromptTokens = 0;
         currentRunCompletionTokens = 0;
 
-        metricsTableBody.innerHTML = "";
-        batchStepsList.innerHTML = "";
-        dynamicTabsContainer.innerHTML = "";
-        dynamicSectionsContentContainer.innerHTML = "";
-        reportRenderedContent.innerHTML = "";
+        if (metricsTableBody) metricsTableBody.innerHTML = "";
+        if (batchStepsList) batchStepsList.innerHTML = "";
+        if (dynamicTabsContainer) dynamicTabsContainer.innerHTML = "";
+        if (dynamicSectionsContentContainer) dynamicSectionsContentContainer.innerHTML = "";
+        if (reportRenderedContent) reportRenderedContent.innerHTML = "";
 
         placeholderPanel.classList.add("hidden");
         monitorPanel.classList.remove("hidden");
